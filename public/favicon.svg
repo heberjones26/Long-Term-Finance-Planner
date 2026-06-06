@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Finance planner icon">
+  <rect width="128" height="128" rx="24" fill="#0f766e"/>
+  <path d="M28 86h72" stroke="#f8fafc" stroke-width="10" stroke-linecap="round"/>
+  <path d="M36 76 56 56l16 14 26-30" fill="none" stroke="#f8fafc" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="36" cy="76" r="7" fill="#facc15"/>
+  <circle cx="56" cy="56" r="7" fill="#facc15"/>
+  <circle cx="72" cy="70" r="7" fill="#facc15"/>
+  <circle cx="98" cy="40" r="7" fill="#facc15"/>
+</svg>
