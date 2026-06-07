@@ -4,6 +4,11 @@ export type MonthKey = string;
 export type MoneyCents = number;
 
 export type Cadence = "monthly" | "yearly" | "weekly" | "oneTime";
+export type TaxFilingStatus =
+  | "single"
+  | "marriedJoint"
+  | "headOfHousehold"
+  | "marriedSeparate";
 
 export type CostItem = {
   id: Id;
@@ -38,6 +43,8 @@ export type FinancialPeriod = {
   grossIncomeItems: RecurringMoneyItem[];
   extraExpenseItems: RecurringMoneyItem[];
   effectiveTaxRate: number;
+  taxFilingStatus?: TaxFilingStatus;
+  additionalTaxRate?: number;
   savingsRate: number;
   charityRate: number;
 };
@@ -64,6 +71,7 @@ export type GoalScenario = {
 export type Goal = {
   id: Id;
   name: string;
+  contributedFromSavingsCents?: MoneyCents;
   notes?: string;
   scenarios: GoalScenario[];
 };
@@ -107,6 +115,8 @@ export type PeriodSummary = {
   startDate: LocalDate;
   endDate: LocalDate;
   carryoverInCents: MoneyCents;
+  calculatedTaxRate: number;
+  annualizedGrossIncomeCents: MoneyCents;
   grossIncomeCents: MoneyCents;
   taxCents: MoneyCents;
   afterTaxIncomeCents: MoneyCents;
@@ -126,9 +136,15 @@ export type GoalResult = {
   targetMonth: MonthKey;
   targetDate: LocalDate;
   requiredCashCents: MoneyCents;
+  contributedFromSavingsCents: MoneyCents;
+  unallocatedAvailableCashCents: MoneyCents;
   availableCashCents: MoneyCents;
   surplusOrShortfallCents: MoneyCents;
   percentFunded: number;
+  requiredDownPaymentCents?: MoneyCents;
+  requiredClosingCostCents?: MoneyCents;
+  availableDownPaymentCents?: MoneyCents;
+  availableDownPaymentPercent?: number;
   estimatedMonthlyPaymentCents?: MoneyCents;
 };
 
@@ -147,6 +163,8 @@ export type ProjectionResult = {
     cumulativeTaxCents: MoneyCents;
     endingSpendableCents: MoneyCents;
     endingSavingsCents: MoneyCents;
+    reservedGoalContributionCents: MoneyCents;
     endingAvailableCents: MoneyCents;
+    endingNetWorthCents: MoneyCents;
   };
 };

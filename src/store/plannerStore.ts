@@ -1,6 +1,14 @@
 import { create } from "zustand";
-import { getActivePlan, replaceActivePlan, resetPlan, savePlan } from "../storage/db";
 import type { PlanDocument } from "../domain/types";
+import {
+  getActivePlan,
+  replaceActivePlan,
+  resetPlan,
+  resetToBlankPlan,
+  savePlan
+} from "../storage/db";
+
+let pendingSaveTimeout: ReturnType<typeof setTimeout> | undefined;
 
 type PlannerState = {
   plan: PlanDocument | null;
@@ -10,6 +18,7 @@ type PlannerState = {
   updatePlan: (updater: (plan: PlanDocument) => PlanDocument) => Promise<void>;
   importPlan: (plan: PlanDocument) => Promise<void>;
   resetWithSeed: () => Promise<void>;
+  resetWithBlank: () => Promise<void>;
 };
 
 export const usePlannerStore = create<PlannerState>((set, get) => ({
@@ -39,15 +48,24 @@ export const usePlannerStore = create<PlannerState>((set, get) => ({
       updatedAt: new Date().toISOString()
     };
     set({ plan: planWithTimestamp, error: null });
-    try {
-      await savePlan(planWithTimestamp);
-    } catch (error) {
-      set({
-        error: error instanceof Error ? error.message : "Unable to save plan."
-      });
+
+    if (pendingSaveTimeout) {
+      clearTimeout(pendingSaveTimeout);
     }
+
+    pendingSaveTimeout = setTimeout(() => {
+      void savePlan(planWithTimestamp).catch((error) => {
+        set({
+          error: error instanceof Error ? error.message : "Unable to save plan."
+        });
+      });
+    }, 350);
   },
   importPlan: async (plan) => {
+    if (pendingSaveTimeout) {
+      clearTimeout(pendingSaveTimeout);
+      pendingSaveTimeout = undefined;
+    }
     set({ error: null });
     try {
       const imported = await replaceActivePlan(plan);
@@ -59,6 +77,10 @@ export const usePlannerStore = create<PlannerState>((set, get) => ({
     }
   },
   resetWithSeed: async () => {
+    if (pendingSaveTimeout) {
+      clearTimeout(pendingSaveTimeout);
+      pendingSaveTimeout = undefined;
+    }
     set({ error: null });
     try {
       const plan = await resetPlan();
@@ -66,6 +88,24 @@ export const usePlannerStore = create<PlannerState>((set, get) => ({
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : "Unable to reset plan."
+      });
+    }
+  },
+  resetWithBlank: async () => {
+    if (pendingSaveTimeout) {
+      clearTimeout(pendingSaveTimeout);
+      pendingSaveTimeout = undefined;
+    }
+    set({ error: null });
+    try {
+      const plan = await resetToBlankPlan();
+      set({ plan });
+    } catch (error) {
+      set({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to create a blank plan."
       });
     }
   }

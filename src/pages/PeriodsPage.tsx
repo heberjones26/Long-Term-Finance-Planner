@@ -1,5 +1,12 @@
-import { addDays, addMonths, format, parseISO } from "date-fns";
-import { CalendarPlus, Plus, Trash2 } from "lucide-react";
+import {
+  addDays,
+  addMonths,
+  differenceInCalendarDays,
+  format,
+  isValid,
+  parseISO
+} from "date-fns";
+import { CalendarPlus, Copy, Plus, Save, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { PageHeader } from "../components/PageHeader";
@@ -8,9 +15,16 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Field, Input, Select } from "../components/ui/field";
 import { createId } from "../domain/ids";
-import { dollarsToCents, formatMoney } from "../domain/money";
+import { dollarsToCents, formatMoney, formatPercent } from "../domain/money";
 import { projectPlan } from "../domain/projection";
-import type { Cadence, FinancialPeriod, RecurringMoneyItem } from "../domain/types";
+import { calculatePeriodTaxProfile, taxFilingStatusLabels } from "../domain/tax";
+import type {
+  Cadence,
+  FinancialPeriod,
+  RecurringMoneyItem,
+  TaxFilingStatus
+} from "../domain/types";
+import { isSameDraft } from "../lib/draft";
 import { cn } from "../lib/utils";
 import { usePlannerStore } from "../store/plannerStore";
 
@@ -25,6 +39,7 @@ type PeriodItemForm = {
 export function PeriodsPage() {
   const { plan, updatePlan } = usePlannerStore();
   const [selectedPeriodId, setSelectedPeriodId] = useState("");
+  const [draftPeriod, setDraftPeriod] = useState<FinancialPeriod | null>(null);
   const projection = useMemo(() => (plan ? projectPlan(plan) : null), [plan]);
 
   const sortedPeriods = useMemo(
@@ -47,25 +62,49 @@ export function PeriodsPage() {
     }
   }, [plan, selectedPeriodId, sortedPeriods]);
 
+  const selectedPeriod = plan?.periods.find(
+    (period) => period.id === selectedPeriodId
+  );
+
+  useEffect(() => {
+    setDraftPeriod(selectedPeriod ? structuredClone(selectedPeriod) : null);
+  }, [selectedPeriod]);
+
+  const draftTaxProfile = useMemo(
+    () => (draftPeriod ? calculatePeriodTaxProfile(draftPeriod) : null),
+    [draftPeriod]
+  );
+
   if (!plan || !projection) {
     return null;
   }
 
-  const selectedPeriod = plan.periods.find(
-    (period) => period.id === selectedPeriodId
-  );
   const selectedSummary = projection.periodSummaries.find(
     (summary) => summary.periodId === selectedPeriodId
   );
+  const hasUnsavedChanges =
+    Boolean(selectedPeriod && draftPeriod) &&
+    !isSameDraft(selectedPeriod, draftPeriod);
 
-  const updatePeriod = (
-    periodId: string,
-    updater: (period: FinancialPeriod) => void
-  ) => {
+  const updateDraftPeriod = (updater: (period: FinancialPeriod) => void) => {
+    setDraftPeriod((current) => {
+      if (!current) {
+        return current;
+      }
+      const next = structuredClone(current);
+      updater(next);
+      return next;
+    });
+  };
+
+  const savePeriod = () => {
+    if (!draftPeriod) {
+      return;
+    }
     void updatePlan((draft) => {
-      const period = draft.periods.find((item) => item.id === periodId);
-      if (period) {
-        updater(period);
+      const index = draft.periods.findIndex((item) => item.id === draftPeriod.id);
+      if (index >= 0) {
+        draft.periods[index] = structuredClone(draftPeriod);
       }
       return draft;
     });
@@ -88,9 +127,55 @@ export function PeriodsPage() {
         grossIncomeItems: [],
         extraExpenseItems: [],
         effectiveTaxRate: 0,
+        taxFilingStatus: "single",
+        additionalTaxRate: 0,
         savingsRate: 0,
         charityRate: 0
       });
+      return draft;
+    });
+    setSelectedPeriodId(periodId);
+  };
+
+  const duplicatePeriod = () => {
+    if (!draftPeriod) {
+      return;
+    }
+
+    const periodId = createId("period");
+    const sourceStart = parseLocalDate(draftPeriod.startDate);
+    const sourceEnd = parseLocalDate(draftPeriod.endDate);
+    const latestEnd = parseLocalDate(sortedPeriods.at(-1)?.endDate);
+    const newStart = latestEnd
+      ? addDays(latestEnd, 1)
+      : sourceStart ?? parseISO(format(new Date(), "yyyy-MM-01"));
+    const sourceLengthDays =
+      sourceStart && sourceEnd
+        ? Math.max(0, differenceInCalendarDays(sourceEnd, sourceStart))
+        : null;
+    const newEnd =
+      sourceLengthDays !== null
+        ? addDays(newStart, sourceLengthDays)
+        : addMonths(newStart, 3);
+    const dateOffsetDays = sourceStart
+      ? differenceInCalendarDays(newStart, sourceStart)
+      : 0;
+    const copiedPeriod: FinancialPeriod = {
+      ...structuredClone(draftPeriod),
+      id: periodId,
+      name: `${draftPeriod.name} copy`,
+      startDate: format(newStart, "yyyy-MM-dd"),
+      endDate: format(newEnd, "yyyy-MM-dd"),
+      grossIncomeItems: draftPeriod.grossIncomeItems.map((item) =>
+        duplicateMoneyItem(item, "income", dateOffsetDays)
+      ),
+      extraExpenseItems: draftPeriod.extraExpenseItems.map((item) =>
+        duplicateMoneyItem(item, "expense", dateOffsetDays)
+      )
+    };
+
+    void updatePlan((draft) => {
+      draft.periods.push(copiedPeriod);
       return draft;
     });
     setSelectedPeriodId(periodId);
@@ -116,10 +201,21 @@ export function PeriodsPage() {
         eyebrow="Timeline"
         title="Periods"
         actions={
-          <Button onClick={addPeriod} type="button">
-            <CalendarPlus className="h-4 w-4" aria-hidden="true" />
-            Period
-          </Button>
+          <>
+            <Button onClick={addPeriod} type="button">
+              <CalendarPlus className="h-4 w-4" aria-hidden="true" />
+              Period
+            </Button>
+            <Button
+              disabled={!draftPeriod}
+              onClick={duplicatePeriod}
+              type="button"
+              variant="outline"
+            >
+              <Copy className="h-4 w-4" aria-hidden="true" />
+              Duplicate
+            </Button>
+          </>
         }
       />
 
@@ -152,19 +248,19 @@ export function PeriodsPage() {
           })}
         </aside>
 
-        {selectedPeriod ? (
+        {selectedPeriod && draftPeriod ? (
           <div className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>{selectedPeriod.name}</CardTitle>
+                <CardTitle>{draftPeriod.name}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="grid gap-4 md:grid-cols-2">
                   <Field label="Period name">
                     <Input
-                      value={selectedPeriod.name}
+                      value={draftPeriod.name}
                       onChange={(event) =>
-                        updatePeriod(selectedPeriod.id, (period) => {
+                        updateDraftPeriod((period) => {
                           period.name = event.target.value;
                         })
                       }
@@ -172,9 +268,9 @@ export function PeriodsPage() {
                   </Field>
                   <Field label="Cost of living">
                     <Select
-                      value={selectedPeriod.costOfLivingScenarioId}
+                      value={draftPeriod.costOfLivingScenarioId}
                       onChange={(event) =>
-                        updatePeriod(selectedPeriod.id, (period) => {
+                        updateDraftPeriod((period) => {
                           period.costOfLivingScenarioId = event.target.value;
                         })
                       }
@@ -189,9 +285,9 @@ export function PeriodsPage() {
                   <Field label="Start date">
                     <Input
                       type="date"
-                      value={selectedPeriod.startDate}
+                      value={draftPeriod.startDate}
                       onChange={(event) =>
-                        updatePeriod(selectedPeriod.id, (period) => {
+                        updateDraftPeriod((period) => {
                           period.startDate = event.target.value;
                         })
                       }
@@ -200,9 +296,9 @@ export function PeriodsPage() {
                   <Field label="End date">
                     <Input
                       type="date"
-                      value={selectedPeriod.endDate}
+                      value={draftPeriod.endDate}
                       onChange={(event) =>
-                        updatePeriod(selectedPeriod.id, (period) => {
+                        updateDraftPeriod((period) => {
                           period.endDate = event.target.value;
                         })
                       }
@@ -211,29 +307,61 @@ export function PeriodsPage() {
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-3">
-                  <Field label="Effective tax rate">
+                  <Field label="Filing status">
+                    <Select
+                      value={draftPeriod.taxFilingStatus ?? "single"}
+                      onChange={(event) =>
+                        updateDraftPeriod((period) => {
+                          period.taxFilingStatus = event.target
+                            .value as TaxFilingStatus;
+                        })
+                      }
+                    >
+                      {Object.entries(taxFilingStatusLabels).map(
+                        ([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        )
+                      )}
+                    </Select>
+                  </Field>
+                  <Field label="State/local estimate">
                     <Input
                       max="100"
                       min="0"
                       step="0.1"
                       type="number"
-                      value={selectedPeriod.effectiveTaxRate}
+                      value={draftPeriod.additionalTaxRate ?? 0}
                       onChange={(event) =>
-                        updatePeriod(selectedPeriod.id, (period) => {
-                          period.effectiveTaxRate = Number(event.target.value);
+                        updateDraftPeriod((period) => {
+                          period.additionalTaxRate = Number(event.target.value);
                         })
                       }
                     />
                   </Field>
+                  <Field label="Calculated tax rate">
+                    <Input
+                      readOnly
+                      value={
+                        draftTaxProfile
+                          ? formatPercent(draftTaxProfile.calculatedTaxRate)
+                          : "0%"
+                      }
+                    />
+                  </Field>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
                   <Field label="Savings rate">
                     <Input
                       max="100"
                       min="0"
                       step="0.1"
                       type="number"
-                      value={selectedPeriod.savingsRate}
+                      value={draftPeriod.savingsRate}
                       onChange={(event) =>
-                        updatePeriod(selectedPeriod.id, (period) => {
+                        updateDraftPeriod((period) => {
                           period.savingsRate = Number(event.target.value);
                         })
                       }
@@ -245,9 +373,9 @@ export function PeriodsPage() {
                       min="0"
                       step="0.1"
                       type="number"
-                      value={selectedPeriod.charityRate}
+                      value={draftPeriod.charityRate}
                       onChange={(event) =>
-                        updatePeriod(selectedPeriod.id, (period) => {
+                        updateDraftPeriod((period) => {
                           period.charityRate = Number(event.target.value);
                         })
                       }
@@ -256,7 +384,7 @@ export function PeriodsPage() {
                 </div>
 
                 {selectedSummary ? (
-                  <div className="grid gap-3 md:grid-cols-4">
+                  <div className="grid gap-3 md:grid-cols-5">
                     <SummaryPill
                       label="Carryover in"
                       value={formatMoney(selectedSummary.carryoverInCents)}
@@ -264,6 +392,10 @@ export function PeriodsPage() {
                     <SummaryPill
                       label="Taxes"
                       value={formatMoney(selectedSummary.taxCents)}
+                    />
+                    <SummaryPill
+                      label="Annualized gross"
+                      value={formatMoney(selectedSummary.annualizedGrossIncomeCents)}
                     />
                     <SummaryPill
                       label="Spendable end"
@@ -276,7 +408,25 @@ export function PeriodsPage() {
                   </div>
                 ) : null}
 
-                <div className="flex justify-end">
+                <div className="flex flex-wrap justify-end gap-2">
+                  {hasUnsavedChanges ? <Badge variant="warning">Unsaved</Badge> : null}
+                  <Button
+                    disabled={!hasUnsavedChanges}
+                    onClick={() => setDraftPeriod(structuredClone(selectedPeriod))}
+                    type="button"
+                    variant="outline"
+                  >
+                    <Undo2 className="h-4 w-4" aria-hidden="true" />
+                    Discard
+                  </Button>
+                  <Button
+                    disabled={!hasUnsavedChanges}
+                    onClick={savePeriod}
+                    type="button"
+                  >
+                    <Save className="h-4 w-4" aria-hidden="true" />
+                    Save
+                  </Button>
                   <Button
                     disabled={plan.periods.length <= 1}
                     onClick={deletePeriod}
@@ -291,14 +441,14 @@ export function PeriodsPage() {
             </Card>
 
             <PeriodItemSection
-              items={selectedPeriod.grossIncomeItems}
+              items={draftPeriod.grossIncomeItems}
               onAdd={(item) =>
-                updatePeriod(selectedPeriod.id, (period) => {
+                updateDraftPeriod((period) => {
                   period.grossIncomeItems.push(item);
                 })
               }
               onDelete={(itemId) =>
-                updatePeriod(selectedPeriod.id, (period) => {
+                updateDraftPeriod((period) => {
                   period.grossIncomeItems = period.grossIncomeItems.filter(
                     (item) => item.id !== itemId
                   );
@@ -308,14 +458,14 @@ export function PeriodsPage() {
             />
 
             <PeriodItemSection
-              items={selectedPeriod.extraExpenseItems}
+              items={draftPeriod.extraExpenseItems}
               onAdd={(item) =>
-                updatePeriod(selectedPeriod.id, (period) => {
+                updateDraftPeriod((period) => {
                   period.extraExpenseItems.push(item);
                 })
               }
               onDelete={(itemId) =>
-                updatePeriod(selectedPeriod.id, (period) => {
+                updateDraftPeriod((period) => {
                   period.extraExpenseItems = period.extraExpenseItems.filter(
                     (item) => item.id !== itemId
                   );
@@ -346,6 +496,31 @@ export function PeriodsPage() {
       </div>
     </div>
   );
+}
+
+function duplicateMoneyItem(
+  item: RecurringMoneyItem,
+  idPrefix: "expense" | "income",
+  dateOffsetDays: number
+): RecurringMoneyItem {
+  const itemDate = parseLocalDate(item.date);
+
+  return {
+    ...structuredClone(item),
+    id: createId(idPrefix),
+    date:
+      itemDate && item.cadence === "oneTime"
+        ? format(addDays(itemDate, dateOffsetDays), "yyyy-MM-dd")
+        : item.date
+  };
+}
+
+function parseLocalDate(value: string | undefined): Date | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = parseISO(value);
+  return isValid(parsed) ? parsed : null;
 }
 
 function SummaryPill({ label, value }: { label: string; value: string }) {
@@ -420,9 +595,7 @@ function PeriodItemSection({
           <Field label="Amount">
             <Input
               inputMode="decimal"
-              min="0"
-              step="0.01"
-              type="number"
+              type="text"
               {...register("amount")}
             />
           </Field>

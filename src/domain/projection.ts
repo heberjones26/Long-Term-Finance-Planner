@@ -10,6 +10,7 @@ import {
   parseISO,
   startOfMonth
 } from "date-fns";
+import { calculatePeriodTaxProfile } from "./tax";
 import type {
   CostOfLivingScenario,
   FinancialPeriod,
@@ -37,6 +38,8 @@ type Contribution = {
   netSpendableChangeCents: MoneyCents;
 };
 
+type TaxProfile = ReturnType<typeof calculatePeriodTaxProfile>;
+
 const emptyContribution = (): Contribution => ({
   grossIncomeCents: 0,
   taxCents: 0,
@@ -56,16 +59,29 @@ export function projectPlan(plan: PlanDocument): ProjectionResult {
   const colScenarios = new Map(
     plan.costOfLivingScenarios.map((scenario) => [scenario.id, scenario])
   );
-  const periodSummaries = createPeriodSummaries(periods);
+  const taxProfiles = new Map(
+    periods.map((period) => [period.id, calculatePeriodTaxProfile(period)])
+  );
+  const periodSummaries = createPeriodSummaries(periods, taxProfiles);
 
   warnings.push(...validatePeriodTimeline(periods));
   warnings.push(...validateScenarioReferences(periods, colScenarios));
 
   const months = buildProjectionMonths(plan, periods);
+  const reservedGoalContributionCents = sumGoalContributions(plan.goals);
   let spendableBalance = plan.startingSpendableCents;
   let savingsBalance = plan.startingSavingsCents;
   let cumulativeTaxCents = 0;
   const projectedMonths: ProjectionMonth[] = [];
+
+  if (reservedGoalContributionCents > plan.startingSavingsCents) {
+    warnings.push({
+      id: "goal-contribution-over-savings",
+      severity: "warning",
+      message:
+        "Goal contributions from savings are greater than the starting savings balance."
+    });
+  }
 
   for (const monthDate of months) {
     const monthStart = startOfMonth(monthDate);
@@ -83,6 +99,7 @@ export function projectPlan(plan: PlanDocument): ProjectionResult {
       const contribution = calculatePeriodMonthContribution(
         period,
         scenario,
+        taxProfiles.get(period.id) ?? calculatePeriodTaxProfile(period),
         monthStart,
         monthEnd
       );
@@ -144,6 +161,10 @@ export function projectPlan(plan: PlanDocument): ProjectionResult {
   }
 
   const lastMonth = projectedMonths.at(-1);
+  const endingNetWorthCents =
+    (lastMonth?.closingSpendableCents ?? plan.startingSpendableCents) +
+    (lastMonth?.closingSavingsCents ?? plan.startingSavingsCents) +
+    reservedGoalContributionCents;
 
   return {
     months: projectedMonths,
@@ -160,9 +181,9 @@ export function projectPlan(plan: PlanDocument): ProjectionResult {
         lastMonth?.closingSpendableCents ?? plan.startingSpendableCents,
       endingSavingsCents:
         lastMonth?.closingSavingsCents ?? plan.startingSavingsCents,
-      endingAvailableCents:
-        (lastMonth?.closingSpendableCents ?? plan.startingSpendableCents) +
-        (lastMonth?.closingSavingsCents ?? plan.startingSavingsCents)
+      reservedGoalContributionCents,
+      endingAvailableCents: endingNetWorthCents,
+      endingNetWorthCents
     }
   };
 }
@@ -225,6 +246,7 @@ export function requiredCashForGoalScenario(
 function calculatePeriodMonthContribution(
   period: FinancialPeriod,
   scenario: CostOfLivingScenario | undefined,
+  taxProfile: TaxProfile,
   monthStart: Date,
   monthEnd: Date
 ): Contribution {
@@ -236,7 +258,9 @@ function calculatePeriodMonthContribution(
     monthEnd,
     ratio
   );
-  const taxCents = Math.round(grossIncomeCents * (period.effectiveTaxRate / 100));
+  const taxCents = Math.round(
+    grossIncomeCents * (taxProfile.calculatedTaxRate / 100)
+  );
   const afterTaxIncomeCents = grossIncomeCents - taxCents;
   const costOfLivingCents = scenario
     ? scenario.items.reduce((total, item) => {
@@ -338,10 +362,17 @@ function calculateGoalResults(
       const targetMonth = scenario.targetDate.slice(0, 7);
       const row =
         months.find((month) => month.month === targetMonth) ?? months.at(-1);
-      const availableCashCents =
+      const contributedFromSavingsCents =
+        goal.contributedFromSavingsCents ?? 0;
+      const unallocatedAvailableCashCents =
         (row?.closingSpendableCents ?? 0) + (row?.closingSavingsCents ?? 0);
+      const availableCashCents =
+        unallocatedAvailableCashCents + contributedFromSavingsCents;
       const requiredCashCents = requiredCashForGoalScenario(scenario);
       const surplusOrShortfallCents = availableCashCents - requiredCashCents;
+      const houseCash = scenario.house
+        ? calculateHouseCashAvailability(scenario.house, availableCashCents)
+        : {};
 
       return {
         goalId: goal.id,
@@ -351,17 +382,60 @@ function calculateGoalResults(
         targetMonth,
         targetDate: scenario.targetDate,
         requiredCashCents,
+        contributedFromSavingsCents,
+        unallocatedAvailableCashCents,
         availableCashCents,
         surplusOrShortfallCents,
         percentFunded:
           requiredCashCents === 0
             ? 100
             : Math.min((availableCashCents / requiredCashCents) * 100, 999),
+        ...houseCash,
         estimatedMonthlyPaymentCents: scenario.house
           ? estimateHousePaymentCents(scenario.house)
           : undefined
       };
     })
+  );
+}
+
+function calculateHouseCashAvailability(
+  fields: HouseGoalFields,
+  availableCashCents: MoneyCents
+): Pick<
+  GoalResult,
+  | "availableDownPaymentCents"
+  | "availableDownPaymentPercent"
+  | "requiredClosingCostCents"
+  | "requiredDownPaymentCents"
+> {
+  const requiredDownPaymentCents = Math.round(
+    fields.purchasePriceCents * (fields.downPaymentPercent / 100)
+  );
+  const requiredClosingCostCents = Math.round(
+    fields.purchasePriceCents * (fields.closingCostPercent / 100)
+  );
+  const availableDownPaymentCents = Math.min(
+    fields.purchasePriceCents,
+    Math.max(0, availableCashCents - requiredClosingCostCents)
+  );
+  const availableDownPaymentPercent =
+    fields.purchasePriceCents === 0
+      ? 0
+      : (availableDownPaymentCents / fields.purchasePriceCents) * 100;
+
+  return {
+    availableDownPaymentCents,
+    availableDownPaymentPercent,
+    requiredClosingCostCents,
+    requiredDownPaymentCents
+  };
+}
+
+function sumGoalContributions(goals: Goal[]): MoneyCents {
+  return goals.reduce(
+    (total, goal) => total + (goal.contributedFromSavingsCents ?? 0),
+    0
   );
 }
 
@@ -383,17 +457,23 @@ function buildProjectionMonths(
 }
 
 function createPeriodSummaries(
-  periods: FinancialPeriod[]
+  periods: FinancialPeriod[],
+  taxProfiles: Map<string, TaxProfile>
 ): Map<string, PeriodSummary> {
   return new Map(
-    periods.map((period) => [
-      period.id,
-      {
+    periods.map((period) => {
+      const taxProfile = taxProfiles.get(period.id) ?? calculatePeriodTaxProfile(period);
+
+      return [
+        period.id,
+        {
         periodId: period.id,
         name: period.name,
         startDate: period.startDate,
         endDate: period.endDate,
         carryoverInCents: Number.NaN,
+        calculatedTaxRate: taxProfile.calculatedTaxRate,
+        annualizedGrossIncomeCents: taxProfile.annualizedGrossIncomeCents,
         grossIncomeCents: 0,
         taxCents: 0,
         afterTaxIncomeCents: 0,
@@ -404,7 +484,8 @@ function createPeriodSummaries(
         spendableEndingCents: 0,
         savingsEndingCents: 0
       }
-    ])
+      ];
+    })
   );
 }
 

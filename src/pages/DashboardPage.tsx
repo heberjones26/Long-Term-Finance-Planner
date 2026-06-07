@@ -30,8 +30,11 @@ export function DashboardPage() {
     month: month.label,
     Spendable: month.closingSpendableCents / 100,
     Savings: month.closingSavingsCents / 100,
-    Available:
-      (month.closingSpendableCents + month.closingSavingsCents) / 100,
+    "Net worth":
+      (month.closingSpendableCents +
+        month.closingSavingsCents +
+        projection.totals.reservedGoalContributionCents) /
+      100,
     Taxes: month.cumulativeTaxCents / 100
   }));
 
@@ -54,15 +57,19 @@ export function DashboardPage() {
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
-          label="Ending available"
-          value={formatMoney(projection.totals.endingAvailableCents)}
-          detail={lastMonth ? `Through ${lastMonth.label}` : undefined}
+          label="Projected net worth"
+          value={formatMoney(projection.totals.endingNetWorthCents)}
+          detail={
+            lastMonth
+              ? `Cash + savings + goals through ${lastMonth.label}`
+              : undefined
+          }
           icon={<Wallet className="h-5 w-5" aria-hidden="true" />}
         />
         <MetricCard
           label="Savings balance"
           value={formatMoney(projection.totals.endingSavingsCents)}
-          detail="Planned transfers included"
+          detail={`${formatMoney(projection.totals.reservedGoalContributionCents)} committed to goals`}
           icon={<PiggyBank className="h-5 w-5" aria-hidden="true" />}
         />
         <MetricCard
@@ -102,7 +109,7 @@ export function DashboardPage() {
                   />
                   <Legend />
                   <Area
-                    dataKey="Available"
+                    dataKey="Net worth"
                     fill="#0f766e"
                     fillOpacity={0.18}
                     stroke="#0f766e"
@@ -167,6 +174,25 @@ export function DashboardPage() {
                     </p>
                   </div>
                   <div>
+                    <p className="text-muted-foreground">Contributed</p>
+                    <p className="font-semibold">
+                      {formatMoney(result.contributedFromSavingsCents)}
+                    </p>
+                  </div>
+                  {result.availableDownPaymentCents !== undefined ? (
+                    <div>
+                      <p className="text-muted-foreground">Down payment</p>
+                      <p className="font-semibold">
+                        {formatMoney(result.availableDownPaymentCents)}
+                      </p>
+                      {result.availableDownPaymentPercent !== undefined ? (
+                        <p className="text-muted-foreground">
+                          {formatPercent(result.availableDownPaymentPercent)}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <div>
                     <p className="text-muted-foreground">Delta</p>
                     <p className="font-semibold">
                       {formatMoney(result.surplusOrShortfallCents)}
@@ -225,7 +251,7 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="max-h-[420px] overflow-auto rounded-md border border-border">
-              <table className="w-full min-w-[780px] text-sm">
+              <table className="w-full min-w-[880px] text-sm">
                 <thead className="sticky top-0 bg-muted text-left text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2 font-medium">Month</th>
@@ -235,38 +261,53 @@ export function DashboardPage() {
                     <th className="px-3 py-2 font-medium">Savings</th>
                     <th className="px-3 py-2 font-medium">Spendable</th>
                     <th className="px-3 py-2 font-medium">Saved</th>
+                    <th className="px-3 py-2 font-medium">Net worth</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {projection.months.map((month) => (
-                    <tr className="border-t border-border" key={month.month}>
-                      <td className="px-3 py-2 font-medium">{month.label}</td>
-                      <td className="px-3 py-2">
-                        {formatMoney(month.grossIncomeCents, { compact: true })}
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatMoney(month.taxCents, { compact: true })}
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatMoney(month.costOfLivingCents, { compact: true })}
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatMoney(month.plannedSavingsCents, {
-                          compact: true
-                        })}
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatMoney(month.closingSpendableCents, {
-                          compact: true
-                        })}
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatMoney(month.closingSavingsCents, {
-                          compact: true
-                        })}
-                      </td>
-                    </tr>
-                  ))}
+                  {projection.months.map((month) => {
+                    const netWorthCents =
+                      month.closingSpendableCents +
+                      month.closingSavingsCents +
+                      projection.totals.reservedGoalContributionCents;
+
+                    return (
+                      <tr className="border-t border-border" key={month.month}>
+                        <td className="px-3 py-2 font-medium">{month.label}</td>
+                        <td className="px-3 py-2">
+                          {formatMoney(month.grossIncomeCents, {
+                            compact: true
+                          })}
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatMoney(month.taxCents, { compact: true })}
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatMoney(month.costOfLivingCents, {
+                            compact: true
+                          })}
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatMoney(month.plannedSavingsCents, {
+                            compact: true
+                          })}
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatMoney(month.closingSpendableCents, {
+                            compact: true
+                          })}
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatMoney(month.closingSavingsCents, {
+                            compact: true
+                          })}
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatMoney(netWorthCents, { compact: true })}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

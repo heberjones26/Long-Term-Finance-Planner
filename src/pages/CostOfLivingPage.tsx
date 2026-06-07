@@ -1,7 +1,8 @@
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, Save, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { PageHeader } from "../components/PageHeader";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Field, Input, Select, Textarea } from "../components/ui/field";
@@ -9,6 +10,7 @@ import { createId } from "../domain/ids";
 import { dollarsToCents, formatMoney } from "../domain/money";
 import { normalizedMonthlyCents } from "../domain/projection";
 import type { CostOfLivingScenario } from "../domain/types";
+import { isSameDraft } from "../lib/draft";
 import { cn } from "../lib/utils";
 import { usePlannerStore } from "../store/plannerStore";
 
@@ -22,6 +24,8 @@ type CostItemForm = {
 export function CostOfLivingPage() {
   const { plan, updatePlan } = usePlannerStore();
   const [selectedScenarioId, setSelectedScenarioId] = useState<string>("");
+  const [draftScenario, setDraftScenario] =
+    useState<CostOfLivingScenario | null>(null);
   const { handleSubmit, register, reset } = useForm<CostItemForm>({
     defaultValues: {
       name: "",
@@ -48,29 +52,43 @@ export function CostOfLivingPage() {
   const selectedScenario = plan?.costOfLivingScenarios.find(
     (scenario) => scenario.id === selectedScenarioId
   );
+  useEffect(() => {
+    setDraftScenario(selectedScenario ? structuredClone(selectedScenario) : null);
+  }, [selectedScenario]);
+
   const categoryTotals = useMemo(
-    () => getCategoryTotals(selectedScenario),
-    [selectedScenario]
+    () => getCategoryTotals(draftScenario),
+    [draftScenario]
   );
   const monthlyTotal = categoryTotals.reduce(
     (total, category) => total + category.amountCents,
     0
   );
 
-  if (!plan || !selectedScenario) {
+  if (!plan || !selectedScenario || !draftScenario) {
     return null;
   }
 
-  const updateScenario = (
-    scenarioId: string,
-    updater: (scenario: CostOfLivingScenario) => void
-  ) => {
+  const hasUnsavedChanges = !isSameDraft(selectedScenario, draftScenario);
+
+  const updateDraftScenario = (updater: (scenario: CostOfLivingScenario) => void) => {
+    setDraftScenario((current) => {
+      if (!current) {
+        return current;
+      }
+      const next = structuredClone(current);
+      updater(next);
+      return next;
+    });
+  };
+
+  const saveScenario = () => {
     void updatePlan((draft) => {
-      const scenario = draft.costOfLivingScenarios.find(
-        (item) => item.id === scenarioId
+      const index = draft.costOfLivingScenarios.findIndex(
+        (scenario) => scenario.id === draftScenario.id
       );
-      if (scenario) {
-        updater(scenario);
+      if (index >= 0) {
+        draft.costOfLivingScenarios[index] = structuredClone(draftScenario);
       }
       return draft;
     });
@@ -93,9 +111,7 @@ export function CostOfLivingPage() {
   const duplicateScenario = () => {
     const scenarioId = createId("col");
     void updatePlan((draft) => {
-      const source = draft.costOfLivingScenarios.find(
-        (scenario) => scenario.id === selectedScenario.id
-      );
+      const source = draftScenario;
       if (source) {
         draft.costOfLivingScenarios.push({
           ...structuredClone(source),
@@ -138,7 +154,7 @@ export function CostOfLivingPage() {
     if (!values.name.trim() || amountCents <= 0) {
       return;
     }
-    updateScenario(selectedScenario.id, (scenario) => {
+    updateDraftScenario((scenario) => {
       scenario.items.push({
         id: createId("cost"),
         name: values.name.trim(),
@@ -170,6 +186,7 @@ export function CostOfLivingPage() {
               <Copy className="h-4 w-4" aria-hidden="true" />
               Duplicate
             </Button>
+            {hasUnsavedChanges ? <Badge variant="warning">Unsaved</Badge> : null}
           </>
         }
       />
@@ -204,15 +221,15 @@ export function CostOfLivingPage() {
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>{selectedScenario.name}</CardTitle>
+              <CardTitle>{draftScenario.name}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2">
                 <Field label="Scenario name">
                   <Input
-                    value={selectedScenario.name}
+                    value={draftScenario.name}
                     onChange={(event) =>
-                      updateScenario(selectedScenario.id, (scenario) => {
+                      updateDraftScenario((scenario) => {
                         scenario.name = event.target.value;
                       })
                     }
@@ -224,15 +241,32 @@ export function CostOfLivingPage() {
               </div>
               <Field label="Notes">
                 <Textarea
-                  value={selectedScenario.notes ?? ""}
+                  value={draftScenario.notes ?? ""}
                   onChange={(event) =>
-                    updateScenario(selectedScenario.id, (scenario) => {
+                    updateDraftScenario((scenario) => {
                       scenario.notes = event.target.value;
                     })
                   }
                 />
               </Field>
-              <div className="flex justify-end">
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  disabled={!hasUnsavedChanges}
+                  onClick={() => setDraftScenario(structuredClone(selectedScenario))}
+                  type="button"
+                  variant="outline"
+                >
+                  <Undo2 className="h-4 w-4" aria-hidden="true" />
+                  Discard
+                </Button>
+                <Button
+                  disabled={!hasUnsavedChanges}
+                  onClick={saveScenario}
+                  type="button"
+                >
+                  <Save className="h-4 w-4" aria-hidden="true" />
+                  Save
+                </Button>
                 <Button
                   disabled={plan.costOfLivingScenarios.length <= 1}
                   onClick={deleteScenario}
@@ -264,10 +298,8 @@ export function CostOfLivingPage() {
                 <Field label="Amount">
                   <Input
                     inputMode="decimal"
-                    min="0"
                     placeholder="0.00"
-                    step="0.01"
-                    type="number"
+                    type="text"
                     {...register("amount")}
                   />
                 </Field>
@@ -298,7 +330,7 @@ export function CostOfLivingPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedScenario.items.map((item) => (
+                    {draftScenario.items.map((item) => (
                       <tr className="border-t border-border" key={item.id}>
                         <td className="px-3 py-2 font-medium">{item.name}</td>
                         <td className="px-3 py-2">{item.category}</td>
@@ -315,7 +347,7 @@ export function CostOfLivingPage() {
                           <Button
                             aria-label={`Delete ${item.name}`}
                             onClick={() =>
-                              updateScenario(selectedScenario.id, (scenario) => {
+                              updateDraftScenario((scenario) => {
                                 scenario.items = scenario.items.filter(
                                   (candidate) => candidate.id !== item.id
                                 );
@@ -357,7 +389,7 @@ export function CostOfLivingPage() {
   );
 }
 
-function getCategoryTotals(scenario: CostOfLivingScenario | undefined) {
+function getCategoryTotals(scenario: CostOfLivingScenario | null | undefined) {
   if (!scenario) {
     return [];
   }

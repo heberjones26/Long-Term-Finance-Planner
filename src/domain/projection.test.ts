@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSeedPlan } from "./sampleData";
+import { createBlankPlan, createSeedPlan } from "./sampleData";
 import {
   estimateHousePaymentCents,
   normalizedMonthlyCents,
@@ -63,9 +63,9 @@ describe("projection engine", () => {
     const result = projectPlan(plan);
 
     expect(result.months[0].grossIncomeCents).toBe(150000);
-    expect(result.months[0].taxCents).toBe(15000);
-    expect(result.months[0].plannedSavingsCents).toBe(13500);
-    expect(result.months[0].charityCents).toBe(13500);
+    expect(result.months[0].taxCents).toBe(20392);
+    expect(result.months[0].plannedSavingsCents).toBe(12961);
+    expect(result.months[0].charityCents).toBe(12961);
   });
 
   it("uses after-tax earned income as the basis for savings and charity", () => {
@@ -87,7 +87,7 @@ describe("projection engine", () => {
           }
         ],
         extraExpenseItems: [],
-        effectiveTaxRate: 20,
+        effectiveTaxRate: 0,
         savingsRate: 25,
         charityRate: 10
       }
@@ -95,12 +95,45 @@ describe("projection engine", () => {
 
     const result = projectPlan(plan);
 
-    expect(result.months[0].taxCents).toBe(20000);
-    expect(result.months[0].afterTaxIncomeCents).toBe(80000);
-    expect(result.months[0].plannedSavingsCents).toBe(20000);
-    expect(result.months[0].charityCents).toBe(8000);
-    expect(result.months[0].closingSavingsCents).toBe(20000);
-    expect(result.months[0].closingSpendableCents).toBe(52000);
+    expect(result.months[0].taxCents).toBe(7650);
+    expect(result.months[0].afterTaxIncomeCents).toBe(92350);
+    expect(result.months[0].plannedSavingsCents).toBe(23088);
+    expect(result.months[0].charityCents).toBe(9235);
+    expect(result.months[0].closingSavingsCents).toBe(23088);
+    expect(result.months[0].closingSpendableCents).toBe(60027);
+  });
+
+  it("adds optional state and local estimate into the calculated tax rate", () => {
+    const plan = basePlan();
+    plan.periods = [
+      {
+        id: "period",
+        name: "Full month",
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+        costOfLivingScenarioId: "col",
+        grossIncomeItems: [
+          {
+            id: "income",
+            name: "Job",
+            category: "Work",
+            amountCents: 100000,
+            cadence: "monthly"
+          }
+        ],
+        extraExpenseItems: [],
+        effectiveTaxRate: 0,
+        taxFilingStatus: "single",
+        additionalTaxRate: 5,
+        savingsRate: 0,
+        charityRate: 0
+      }
+    ];
+
+    const result = projectPlan(plan);
+
+    expect(result.periodSummaries[0].calculatedTaxRate).toBeCloseTo(12.65, 2);
+    expect(result.months[0].taxCents).toBe(12650);
   });
 
   it("carries spendable cash into the next period without taxing it again", () => {
@@ -142,9 +175,9 @@ describe("projection engine", () => {
 
     const result = projectPlan(plan);
 
-    expect(result.periodSummaries[1].carryoverInCents).toBe(100000);
+    expect(result.periodSummaries[1].carryoverInCents).toBe(92350);
     expect(result.months[1].taxCents).toBe(0);
-    expect(result.months[1].closingSpendableCents).toBe(100000);
+    expect(result.months[1].closingSpendableCents).toBe(92350);
   });
 
   it("detects gaps and overlaps in sequential periods", () => {
@@ -237,6 +270,154 @@ describe("projection engine", () => {
     expect(result.goalResults[0].surplusOrShortfallCents).toBe(10000);
   });
 
+  it("adds goal contributions to goal feasibility and plan availability", () => {
+    const plan = basePlan();
+    plan.startingSavingsCents = 100000;
+    plan.periods = [
+      {
+        id: "period",
+        name: "Month",
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+        costOfLivingScenarioId: "col",
+        grossIncomeItems: [],
+        extraExpenseItems: [],
+        effectiveTaxRate: 0,
+        savingsRate: 0,
+        charityRate: 0
+      }
+    ];
+    plan.goals = [
+      {
+        id: "house",
+        name: "House",
+        contributedFromSavingsCents: 30000,
+        scenarios: [
+          {
+            id: "house-base",
+            name: "Base",
+            targetDate: "2026-01-15",
+            targetAmountCents: 80000
+          }
+        ]
+      },
+      {
+        id: "car",
+        name: "Car",
+        contributedFromSavingsCents: 20000,
+        scenarios: [
+          {
+            id: "car-base",
+            name: "Base",
+            targetDate: "2026-01-15",
+            targetAmountCents: 80000
+          }
+        ]
+      }
+    ];
+
+    const result = projectPlan(plan);
+    const houseResult = result.goalResults.find(
+      (item) => item.goalId === "house"
+    );
+    const carResult = result.goalResults.find((item) => item.goalId === "car");
+
+    expect(result.months[0].openingSavingsCents).toBe(100000);
+    expect(result.totals.endingSavingsCents).toBe(100000);
+    expect(result.totals.reservedGoalContributionCents).toBe(50000);
+    expect(result.totals.endingAvailableCents).toBe(150000);
+    expect(result.totals.endingNetWorthCents).toBe(150000);
+    expect(houseResult?.unallocatedAvailableCashCents).toBe(100000);
+    expect(houseResult?.contributedFromSavingsCents).toBe(30000);
+    expect(houseResult?.availableCashCents).toBe(130000);
+    expect(carResult?.availableCashCents).toBe(120000);
+  });
+
+  it("uses goal contributions when calculating available house down payment", () => {
+    const plan = basePlan();
+    plan.startingSavingsCents = 5891934;
+    plan.periods = [
+      {
+        id: "period",
+        name: "Month",
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+        costOfLivingScenarioId: "col",
+        grossIncomeItems: [],
+        extraExpenseItems: [],
+        effectiveTaxRate: 0,
+        savingsRate: 0,
+        charityRate: 0
+      }
+    ];
+    plan.goals = [
+      {
+        id: "house",
+        name: "House",
+        contributedFromSavingsCents: 3000000,
+        scenarios: [
+          {
+            id: "house-base",
+            name: "Base",
+            targetDate: "2026-01-15",
+            targetAmountCents: 0,
+            house: {
+              purchasePriceCents: 10000000,
+              downPaymentPercent: 20,
+              closingCostPercent: 3,
+              interestRatePercent: 6,
+              loanTermYears: 30,
+              annualPropertyTaxPercent: 1,
+              monthlyInsuranceCents: 0,
+              monthlyHoaCents: 0
+            }
+          }
+        ]
+      },
+    ];
+
+    const result = projectPlan(plan);
+    const houseResult = result.goalResults.find(
+      (item) => item.goalId === "house"
+    );
+
+    expect(houseResult?.unallocatedAvailableCashCents).toBe(5891934);
+    expect(houseResult?.availableCashCents).toBe(8891934);
+    expect(houseResult?.requiredCashCents).toBe(2300000);
+    expect(houseResult?.requiredDownPaymentCents).toBe(2000000);
+    expect(houseResult?.requiredClosingCostCents).toBe(300000);
+    expect(houseResult?.availableDownPaymentCents).toBe(8591934);
+    expect(houseResult?.availableDownPaymentPercent).toBeCloseTo(85.92, 2);
+  });
+
+  it("warns when goal contributions exceed starting savings", () => {
+    const plan = basePlan();
+    plan.startingSavingsCents = 10000;
+    plan.goals = [
+      {
+        id: "goal",
+        name: "Goal",
+        contributedFromSavingsCents: 20000,
+        scenarios: [
+          {
+            id: "scenario",
+            name: "Base",
+            targetDate: "2026-01-15",
+            targetAmountCents: 20000
+          }
+        ]
+      }
+    ];
+
+    const result = projectPlan(plan);
+
+    expect(
+      result.warnings.some(
+        (warning) => warning.id === "goal-contribution-over-savings"
+      )
+    ).toBe(true);
+  });
+
   it("estimates house payment with principal, interest, taxes, insurance, and HOA", () => {
     const payment = estimateHousePaymentCents({
       purchasePriceCents: 40000000,
@@ -258,5 +439,14 @@ describe("projection engine", () => {
 
     expect(result.months.length).toBeGreaterThan(12);
     expect(result.goalResults.length).toBe(2);
+  });
+
+  it("projects a blank plan without demo data", () => {
+    const result = projectPlan(createBlankPlan());
+
+    expect(result.months).toHaveLength(1);
+    expect(result.goalResults).toHaveLength(0);
+    expect(result.totals.endingAvailableCents).toBe(0);
+    expect(result.totals.endingNetWorthCents).toBe(0);
   });
 });

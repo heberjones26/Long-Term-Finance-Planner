@@ -1,4 +1,4 @@
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, Save, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { MoneyInput } from "../components/MoneyInput";
 import { PageHeader } from "../components/PageHeader";
@@ -14,6 +14,7 @@ import {
   requiredCashForGoalScenario
 } from "../domain/projection";
 import type { Goal, GoalScenario, HouseGoalFields } from "../domain/types";
+import { isSameDraft } from "../lib/draft";
 import { cn } from "../lib/utils";
 import { usePlannerStore } from "../store/plannerStore";
 
@@ -21,6 +22,7 @@ export function GoalsPage() {
   const { plan, updatePlan } = usePlannerStore();
   const [selectedGoalId, setSelectedGoalId] = useState("");
   const [selectedScenarioId, setSelectedScenarioId] = useState("");
+  const [draftGoal, setDraftGoal] = useState<Goal | null>(null);
   const projection = useMemo(() => (plan ? projectPlan(plan) : null), [plan]);
 
   useEffect(() => {
@@ -43,12 +45,17 @@ export function GoalsPage() {
     }
   }, [plan, selectedGoalId, selectedScenarioId]);
 
+  const selectedGoal = plan?.goals.find((goal) => goal.id === selectedGoalId);
+
+  useEffect(() => {
+    setDraftGoal(selectedGoal ? structuredClone(selectedGoal) : null);
+  }, [selectedGoal]);
+
   if (!plan || !projection) {
     return null;
   }
 
-  const selectedGoal = plan.goals.find((goal) => goal.id === selectedGoalId);
-  const selectedScenario = selectedGoal?.scenarios.find(
+  const selectedScenario = draftGoal?.scenarios.find(
     (scenario) => scenario.id === selectedScenarioId
   );
   const selectedResult = projection.goalResults.find(
@@ -56,27 +63,42 @@ export function GoalsPage() {
       result.goalId === selectedGoal?.id &&
       result.scenarioId === selectedScenario?.id
   );
+  const hasUnsavedChanges =
+    Boolean(selectedGoal && draftGoal) && !isSameDraft(selectedGoal, draftGoal);
 
-  const updateGoal = (goalId: string, updater: (goal: Goal) => void) => {
-    void updatePlan((draft) => {
-      const goal = draft.goals.find((item) => item.id === goalId);
-      if (goal) {
-        updater(goal);
+  const updateDraftGoal = (updater: (goal: Goal) => void) => {
+    setDraftGoal((current) => {
+      if (!current) {
+        return current;
       }
-      return draft;
+      const next = structuredClone(current);
+      updater(next);
+      return next;
     });
   };
 
-  const updateScenario = (
-    goalId: string,
+  const updateDraftScenario = (
     scenarioId: string,
     updater: (scenario: GoalScenario) => void
   ) => {
-    updateGoal(goalId, (goal) => {
+    updateDraftGoal((goal) => {
       const scenario = goal.scenarios.find((item) => item.id === scenarioId);
       if (scenario) {
         updater(scenario);
       }
+    });
+  };
+
+  const saveGoal = () => {
+    if (!draftGoal) {
+      return;
+    }
+    void updatePlan((draft) => {
+      const index = draft.goals.findIndex((goal) => goal.id === draftGoal.id);
+      if (index >= 0) {
+        draft.goals[index] = structuredClone(draftGoal);
+      }
+      return draft;
     });
   };
 
@@ -87,6 +109,7 @@ export function GoalsPage() {
       draft.goals.push({
         id: goalId,
         name: "New goal",
+        contributedFromSavingsCents: 0,
         notes: "",
         scenarios: [
           {
@@ -118,11 +141,11 @@ export function GoalsPage() {
   };
 
   const addScenario = () => {
-    if (!selectedGoal) {
+    if (!draftGoal) {
       return;
     }
     const scenarioId = createId("goal_scenario");
-    updateGoal(selectedGoal.id, (goal) => {
+    updateDraftGoal((goal) => {
       goal.scenarios.push({
         id: scenarioId,
         name: "New scenario",
@@ -135,11 +158,11 @@ export function GoalsPage() {
   };
 
   const duplicateScenario = () => {
-    if (!selectedGoal || !selectedScenario) {
+    if (!draftGoal || !selectedScenario) {
       return;
     }
     const scenarioId = createId("goal_scenario");
-    updateGoal(selectedGoal.id, (goal) => {
+    updateDraftGoal((goal) => {
       goal.scenarios.push({
         ...structuredClone(selectedScenario),
         id: scenarioId,
@@ -150,15 +173,15 @@ export function GoalsPage() {
   };
 
   const deleteScenario = () => {
-    if (!selectedGoal || !selectedScenario || selectedGoal.scenarios.length <= 1) {
+    if (!draftGoal || !selectedScenario || draftGoal.scenarios.length <= 1) {
       return;
     }
-    updateGoal(selectedGoal.id, (goal) => {
+    updateDraftGoal((goal) => {
       goal.scenarios = goal.scenarios.filter(
         (scenario) => scenario.id !== selectedScenario.id
       );
     });
-    const fallback = selectedGoal.scenarios.find(
+    const fallback = draftGoal.scenarios.find(
       (scenario) => scenario.id !== selectedScenario.id
     );
     setSelectedScenarioId(fallback?.id ?? "");
@@ -176,7 +199,7 @@ export function GoalsPage() {
               Goal
             </Button>
             <Button
-              disabled={!selectedGoal}
+              disabled={!draftGoal}
               onClick={addScenario}
               type="button"
               variant="outline"
@@ -184,6 +207,7 @@ export function GoalsPage() {
               <Plus className="h-4 w-4" aria-hidden="true" />
               Scenario
             </Button>
+            {hasUnsavedChanges ? <Badge variant="warning">Unsaved</Badge> : null}
           </>
         }
       />
@@ -212,19 +236,19 @@ export function GoalsPage() {
           ))}
         </aside>
 
-        {selectedGoal && selectedScenario ? (
+        {selectedGoal && draftGoal && selectedScenario ? (
           <div className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>{selectedGoal.name}</CardTitle>
+                <CardTitle>{draftGoal.name}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-5">
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-3">
                   <Field label="Goal name">
                     <Input
-                      value={selectedGoal.name}
+                      value={draftGoal.name}
                       onChange={(event) =>
-                        updateGoal(selectedGoal.id, (goal) => {
+                        updateDraftGoal((goal) => {
                           goal.name = event.target.value;
                         })
                       }
@@ -235,19 +259,29 @@ export function GoalsPage() {
                       value={selectedScenario.id}
                       onChange={(event) => setSelectedScenarioId(event.target.value)}
                     >
-                      {selectedGoal.scenarios.map((scenario) => (
+                      {draftGoal.scenarios.map((scenario) => (
                         <option key={scenario.id} value={scenario.id}>
                           {scenario.name}
                         </option>
                       ))}
                     </Select>
                   </Field>
+                  <Field label="Contributed from savings">
+                    <MoneyInput
+                      valueCents={draftGoal.contributedFromSavingsCents ?? 0}
+                      onChange={(value) =>
+                        updateDraftGoal((goal) => {
+                          goal.contributedFromSavingsCents = value;
+                        })
+                      }
+                    />
+                  </Field>
                 </div>
                 <Field label="Notes">
                   <Textarea
-                    value={selectedGoal.notes ?? ""}
+                    value={draftGoal.notes ?? ""}
                     onChange={(event) =>
-                      updateGoal(selectedGoal.id, (goal) => {
+                      updateDraftGoal((goal) => {
                         goal.notes = event.target.value;
                       })
                     }
@@ -263,13 +297,32 @@ export function GoalsPage() {
                     Duplicate Scenario
                   </Button>
                   <Button
-                    disabled={selectedGoal.scenarios.length <= 1}
+                    disabled={draftGoal.scenarios.length <= 1}
                     onClick={deleteScenario}
                     type="button"
                     variant="outline"
                   >
                     <Trash2 className="h-4 w-4" aria-hidden="true" />
                     Delete Scenario
+                  </Button>
+                  <Button
+                    disabled={!hasUnsavedChanges}
+                    onClick={() =>
+                      setDraftGoal(selectedGoal ? structuredClone(selectedGoal) : null)
+                    }
+                    type="button"
+                    variant="outline"
+                  >
+                    <Undo2 className="h-4 w-4" aria-hidden="true" />
+                    Discard
+                  </Button>
+                  <Button
+                    disabled={!hasUnsavedChanges}
+                    onClick={saveGoal}
+                    type="button"
+                  >
+                    <Save className="h-4 w-4" aria-hidden="true" />
+                    Save
                   </Button>
                   <Button
                     disabled={plan.goals.length <= 1}
@@ -294,8 +347,7 @@ export function GoalsPage() {
                     <Input
                       value={selectedScenario.name}
                       onChange={(event) =>
-                        updateScenario(
-                          selectedGoal.id,
+                        updateDraftScenario(
                           selectedScenario.id,
                           (scenario) => {
                             scenario.name = event.target.value;
@@ -309,8 +361,7 @@ export function GoalsPage() {
                       type="date"
                       value={selectedScenario.targetDate}
                       onChange={(event) =>
-                        updateScenario(
-                          selectedGoal.id,
+                        updateDraftScenario(
                           selectedScenario.id,
                           (scenario) => {
                             scenario.targetDate = event.target.value;
@@ -323,8 +374,7 @@ export function GoalsPage() {
                     <MoneyInput
                       valueCents={selectedScenario.targetAmountCents}
                       onChange={(value) =>
-                        updateScenario(
-                          selectedGoal.id,
+                        updateDraftScenario(
                           selectedScenario.id,
                           (scenario) => {
                             scenario.targetAmountCents = value;
@@ -344,8 +394,7 @@ export function GoalsPage() {
                 <HouseFields
                   fields={selectedScenario.house ?? defaultHouseFields()}
                   onChange={(house) =>
-                    updateScenario(
-                      selectedGoal.id,
+                    updateDraftScenario(
                       selectedScenario.id,
                       (scenario) => {
                         scenario.house = house;
@@ -362,15 +411,36 @@ export function GoalsPage() {
               </CardHeader>
               <CardContent>
                 {selectedResult ? (
-                  <div className="grid gap-4 md:grid-cols-4">
+                  <div className="grid gap-4 md:grid-cols-6">
                     <ResultPill
                       label="Funded"
                       value={formatPercent(Math.round(selectedResult.percentFunded))}
                     />
                     <ResultPill
+                      label="Contributed"
+                      value={formatMoney(
+                        selectedResult.contributedFromSavingsCents
+                      )}
+                    />
+                    <ResultPill
                       label="Available"
                       value={formatMoney(selectedResult.availableCashCents)}
                     />
+                    {selectedResult.availableDownPaymentCents !== undefined ? (
+                      <ResultPill
+                        label="Down payment"
+                        value={formatMoney(
+                          selectedResult.availableDownPaymentCents
+                        )}
+                        detail={
+                          selectedResult.availableDownPaymentPercent !== undefined
+                            ? formatPercent(
+                                selectedResult.availableDownPaymentPercent
+                              )
+                            : undefined
+                        }
+                      />
+                    ) : null}
                     <ResultPill
                       label="Delta"
                       value={formatMoney(selectedResult.surplusOrShortfallCents)}
@@ -497,10 +567,12 @@ function PercentInput({
 }
 
 function ResultPill({
+  detail,
   label,
   value,
   status
 }: {
+  detail?: string;
   label: string;
   value: string;
   status?: "success" | "danger";
@@ -517,6 +589,7 @@ function ResultPill({
       >
         {value}
       </p>
+      {detail ? <p className="mt-1 text-sm text-muted-foreground">{detail}</p> : null}
     </div>
   );
 }

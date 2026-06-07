@@ -3,6 +3,31 @@ import type { PlanDocument } from "./types";
 
 const nowIso = () => new Date().toISOString();
 
+export function createBlankPlan(): PlanDocument {
+  const timestamp = nowIso();
+
+  return {
+    id: createId("plan"),
+    name: "Untitled plan",
+    currency: "USD",
+    startingSpendableCents: 0,
+    startingSavingsCents: 0,
+    schemaVersion: 1,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    costOfLivingScenarios: [
+      {
+        id: createId("col"),
+        name: "Default",
+        notes: "",
+        items: []
+      }
+    ],
+    periods: [],
+    goals: []
+  };
+}
+
 export function createSeedPlan(): PlanDocument {
   const semesterColId = createId("col");
   const leanColId = createId("col");
@@ -96,6 +121,8 @@ export function createSeedPlan(): PlanDocument {
         endDate: "2026-12-10",
         costOfLivingScenarioId: semesterColId,
         effectiveTaxRate: 12,
+        taxFilingStatus: "single",
+        additionalTaxRate: 0,
         savingsRate: 15,
         charityRate: 10,
         grossIncomeItems: [
@@ -125,6 +152,8 @@ export function createSeedPlan(): PlanDocument {
         endDate: "2027-05-05",
         costOfLivingScenarioId: semesterColId,
         effectiveTaxRate: 12,
+        taxFilingStatus: "single",
+        additionalTaxRate: 0,
         savingsRate: 18,
         charityRate: 10,
         grossIncomeItems: [
@@ -145,6 +174,8 @@ export function createSeedPlan(): PlanDocument {
         endDate: "2027-08-05",
         costOfLivingScenarioId: leanColId,
         effectiveTaxRate: 18,
+        taxFilingStatus: "single",
+        additionalTaxRate: 0,
         savingsRate: 35,
         charityRate: 10,
         grossIncomeItems: [
@@ -172,6 +203,7 @@ export function createSeedPlan(): PlanDocument {
       {
         id: houseGoalId,
         name: "Buy a house",
+        contributedFromSavingsCents: 0,
         notes: "Compare realistic and stretch down-payment paths.",
         scenarios: [
           {

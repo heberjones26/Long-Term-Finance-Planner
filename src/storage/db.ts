@@ -1,6 +1,6 @@
 import Dexie, { type Table } from "dexie";
 import { planDocumentSchema } from "../domain/schemas";
-import { createSeedPlan } from "../domain/sampleData";
+import { createBlankPlan, createSeedPlan } from "../domain/sampleData";
 import type { PlanDocument } from "../domain/types";
 
 const ACTIVE_PLAN_KEY = "longTermFinancePlanner.activePlanId";
@@ -62,4 +62,11 @@ export async function resetPlan(): Promise<PlanDocument> {
   await db.plans.clear();
   await savePlan(seedPlan);
   return seedPlan;
+}
+
+export async function resetToBlankPlan(): Promise<PlanDocument> {
+  const blankPlan = createBlankPlan();
+  await db.plans.clear();
+  await savePlan(blankPlan);
+  return blankPlan;
 }

@@ -3,6 +3,12 @@ import { z } from "zod";
 const moneyCentsSchema = z.number().int();
 const percentSchema = z.number().min(0).max(100);
 const localDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const taxFilingStatusSchema = z.enum([
+  "single",
+  "marriedJoint",
+  "headOfHousehold",
+  "marriedSeparate"
+]);
 
 export const costItemSchema = z.object({
   id: z.string(),
@@ -38,6 +44,8 @@ export const financialPeriodSchema = z
     grossIncomeItems: z.array(recurringMoneyItemSchema),
     extraExpenseItems: z.array(recurringMoneyItemSchema),
     effectiveTaxRate: percentSchema,
+    taxFilingStatus: taxFilingStatusSchema.optional(),
+    additionalTaxRate: percentSchema.optional(),
     savingsRate: percentSchema,
     charityRate: percentSchema
   })
@@ -68,6 +76,7 @@ export const goalScenarioSchema = z.object({
 export const goalSchema = z.object({
   id: z.string(),
   name: z.string().min(1),
+  contributedFromSavingsCents: moneyCentsSchema.nonnegative().optional(),
   notes: z.string().optional(),
   scenarios: z.array(goalScenarioSchema).min(1)
 });

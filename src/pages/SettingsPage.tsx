@@ -1,21 +1,60 @@
-import { Download, RotateCcw, Upload } from "lucide-react";
-import { useState } from "react";
+import { Download, Eraser, RotateCcw, Save, Undo2, Upload } from "lucide-react";
+import { useEffect, useState } from "react";
 import { MoneyInput } from "../components/MoneyInput";
 import { PageHeader } from "../components/PageHeader";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Field, Input } from "../components/ui/field";
 import { formatMoney } from "../domain/money";
+import { isSameDraft } from "../lib/draft";
 import { downloadPlan, parsePlanJson } from "../storage/importExport";
 import { usePlannerStore } from "../store/plannerStore";
 
+type SettingsDraft = {
+  name: string;
+  startingSavingsCents: number;
+  startingSpendableCents: number;
+};
+
 export function SettingsPage() {
-  const { importPlan, plan, resetWithSeed, updatePlan } = usePlannerStore();
+  const { importPlan, plan, resetWithBlank, resetWithSeed, updatePlan } =
+    usePlannerStore();
+  const [draftSettings, setDraftSettings] = useState<SettingsDraft | null>(null);
   const [status, setStatus] = useState("");
 
-  if (!plan) {
+  useEffect(() => {
+    setDraftSettings(
+      plan
+        ? {
+            name: plan.name,
+            startingSavingsCents: plan.startingSavingsCents,
+            startingSpendableCents: plan.startingSpendableCents
+          }
+        : null
+    );
+  }, [plan]);
+
+  if (!plan || !draftSettings) {
     return null;
   }
+
+  const savedSettings: SettingsDraft = {
+    name: plan.name,
+    startingSavingsCents: plan.startingSavingsCents,
+    startingSpendableCents: plan.startingSpendableCents
+  };
+  const hasUnsavedChanges = !isSameDraft(savedSettings, draftSettings);
+
+  const saveSettings = () => {
+    void updatePlan((draft) => {
+      draft.name = draftSettings.name;
+      draft.startingSavingsCents = draftSettings.startingSavingsCents;
+      draft.startingSpendableCents = draftSettings.startingSpendableCents;
+      return draft;
+    });
+    setStatus("Plan settings saved");
+  };
 
   const handleImport = async (file: File | undefined) => {
     if (!file) {
@@ -43,11 +82,13 @@ export function SettingsPage() {
           <CardContent className="space-y-5">
             <Field label="Plan name">
               <Input
-                value={plan.name}
+                value={draftSettings.name}
                 onChange={(event) =>
-                  void updatePlan((draft) => {
-                    draft.name = event.target.value;
-                    return draft;
+                  setDraftSettings((current) => {
+                    if (!current) {
+                      return current;
+                    }
+                    return { ...current, name: event.target.value };
                   })
                 }
               />
@@ -55,26 +96,50 @@ export function SettingsPage() {
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Starting spendable cash">
                 <MoneyInput
-                  valueCents={plan.startingSpendableCents}
+                  valueCents={draftSettings.startingSpendableCents}
                   onChange={(value) =>
-                    void updatePlan((draft) => {
-                      draft.startingSpendableCents = value;
-                      return draft;
+                    setDraftSettings((current) => {
+                      if (!current) {
+                        return current;
+                      }
+                      return { ...current, startingSpendableCents: value };
                     })
                   }
                 />
               </Field>
               <Field label="Starting savings">
                 <MoneyInput
-                  valueCents={plan.startingSavingsCents}
+                  valueCents={draftSettings.startingSavingsCents}
                   onChange={(value) =>
-                    void updatePlan((draft) => {
-                      draft.startingSavingsCents = value;
-                      return draft;
+                    setDraftSettings((current) => {
+                      if (!current) {
+                        return current;
+                      }
+                      return { ...current, startingSavingsCents: value };
                     })
                   }
                 />
               </Field>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              {hasUnsavedChanges ? <Badge variant="warning">Unsaved</Badge> : null}
+              <Button
+                disabled={!hasUnsavedChanges}
+                onClick={() => setDraftSettings(savedSettings)}
+                type="button"
+                variant="outline"
+              >
+                <Undo2 className="h-4 w-4" aria-hidden="true" />
+                Discard
+              </Button>
+              <Button
+                disabled={!hasUnsavedChanges}
+                onClick={saveSettings}
+                type="button"
+              >
+                <Save className="h-4 w-4" aria-hidden="true" />
+                Save
+              </Button>
             </div>
             <div className="grid gap-3 rounded-md border border-border bg-background p-4 text-sm md:grid-cols-3">
               <div>
@@ -122,18 +187,38 @@ export function SettingsPage() {
                 onChange={(event) => void handleImport(event.target.files?.[0])}
               />
             </label>
-            <Button
-              className="w-full"
-              onClick={() => {
-                void resetWithSeed();
-                setStatus("Reset");
-              }}
-              type="button"
-              variant="outline"
-            >
-              <RotateCcw className="h-4 w-4" aria-hidden="true" />
-              Reset Demo Data
-            </Button>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Button
+                className="w-full"
+                onClick={() => {
+                  void resetWithSeed();
+                  setStatus("Demo data reset");
+                }}
+                type="button"
+                variant="outline"
+              >
+                <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                Reset Demo Data
+              </Button>
+              <Button
+                className="w-full"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "This will delete all local planner data and create an empty plan."
+                    )
+                  ) {
+                    void resetWithBlank();
+                    setStatus("Blank slate created");
+                  }
+                }}
+                type="button"
+                variant="outline"
+              >
+                <Eraser className="h-4 w-4" aria-hidden="true" />
+                Blank Slate
+              </Button>
+            </div>
             {status ? (
               <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
                 {status}
