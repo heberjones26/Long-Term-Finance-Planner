@@ -3,8 +3,11 @@ import {
   Banknote,
   FlaskConical,
   PiggyBank,
+  Plus,
   RotateCcw,
   Save,
+  Target,
+  Trash2,
   Wallet
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -25,21 +28,28 @@ import { PageHeader } from "../components/PageHeader";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Field, Input, Select } from "../components/ui/field";
+import { Field, Select } from "../components/ui/field";
+import { createId } from "../domain/ids";
 import { formatMoney } from "../domain/money";
 import { projectPlan } from "../domain/projection";
 import type {
+  CostItem,
+  FinancialPeriod,
   GoalResult,
-  GoalScenario,
-  HouseGoalFields,
+  Id,
+  MoneyCents,
   PlanDocument,
   ProjectionResult,
-  ProjectionWarning
+  ProjectionWarning,
+  RecurringMoneyItem
 } from "../domain/types";
 import {
   applyWhatIfInputs,
   createWhatIfComparison,
   defaultWhatIfInputs,
+  type WhatIfCostOfLivingItemOverride,
+  type WhatIfPeriodItemKind,
+  type WhatIfPeriodItemOverride,
   type WhatIfInputs
 } from "../domain/whatIf";
 import { usePlannerStore } from "../store/plannerStore";
@@ -70,22 +80,28 @@ export function WhatIfPage() {
         : [],
     [plan]
   );
-  const selectedPeriod = sortedPeriods.find(
-    (period) => period.id === inputs.selectedPeriodId
+  const costOfLivingItemOverrides = useMemo(
+    () => inputs.costOfLivingItemOverrides ?? [],
+    [inputs.costOfLivingItemOverrides]
+  );
+  const periodItemOverrides = useMemo(
+    () => inputs.periodItemOverrides ?? [],
+    [inputs.periodItemOverrides]
   );
   const selectedGoal = plan?.goals.find(
     (goal) => goal.id === inputs.selectedGoalId
   );
-  const selectedScenario = selectedGoal?.scenarios.find(
-    (scenario) => scenario.id === inputs.selectedScenarioId
+  const firstCostOfLivingOverrideTarget = useMemo(
+    () =>
+      plan
+        ? findFirstAvailableCostOfLivingItem(plan, costOfLivingItemOverrides)
+        : undefined,
+    [costOfLivingItemOverrides, plan]
   );
-  const selectedHouseFields =
-    selectedScenario && isHouseScenario(selectedScenario)
-      ? selectedScenario.house
-      : undefined;
-  const housePreview = selectedHouseFields
-    ? { ...selectedHouseFields, ...inputs.house }
-    : undefined;
+  const firstPeriodOverrideTarget = useMemo(
+    () => findFirstAvailablePeriodItem(sortedPeriods, periodItemOverrides),
+    [periodItemOverrides, sortedPeriods]
+  );
 
   const baseProjection = useMemo(
     () => (plan ? projectPlan(plan) : null),
@@ -118,7 +134,7 @@ export function WhatIfPage() {
         : [],
     [baseProjection, whatIfProjection]
   );
-  const changeCount = getWhatIfChangeCount(inputs, selectedScenario);
+  const changeCount = plan ? getWhatIfChangeCount(inputs, plan) : 0;
   const hasChanges = changeCount > 0;
 
   if (!plan || !baseProjection || !whatIfProjection || !comparison) {
@@ -129,18 +145,212 @@ export function WhatIfPage() {
     setInputs((current) => ({ ...current, ...updates }));
   };
 
-  function updateHouseField<K extends keyof HouseGoalFields>(
-    key: K,
-    value: HouseGoalFields[K]
-  ) {
+  const addCostOfLivingOverride = () => {
+    if (!firstCostOfLivingOverrideTarget) {
+      return;
+    }
+
     setInputs((current) => ({
       ...current,
-      house: {
-        ...current.house,
-        [key]: value
-      }
+      costOfLivingItemOverrides: [
+        ...(current.costOfLivingItemOverrides ?? []),
+        {
+          id: createId("what_if_col_item"),
+          costOfLivingScenarioId: firstCostOfLivingOverrideTarget.scenario.id,
+          itemId: firstCostOfLivingOverrideTarget.item.id,
+          amountCents: firstCostOfLivingOverrideTarget.item.amountCents
+        }
+      ]
     }));
-  }
+  };
+
+  const updateCostOfLivingOverride = (
+    overrideId: Id,
+    updates: Partial<WhatIfCostOfLivingItemOverride>
+  ) => {
+    setInputs((current) => {
+      const overrides = current.costOfLivingItemOverrides ?? [];
+
+      return {
+        ...current,
+        costOfLivingItemOverrides: overrides.map((override) => {
+          if (override.id !== overrideId) {
+            return override;
+          }
+
+          const nextOverride = { ...override, ...updates };
+
+          if (
+            updates.costOfLivingScenarioId &&
+            updates.costOfLivingScenarioId !== override.costOfLivingScenarioId
+          ) {
+            const scenario = plan.costOfLivingScenarios.find(
+              (item) => item.id === updates.costOfLivingScenarioId
+            );
+            const firstItem =
+              scenario?.items.find(
+                (item) =>
+                  !isCostOfLivingTargetTaken(
+                    overrides,
+                    override.id,
+                    scenario.id,
+                    item.id
+                  )
+              ) ?? scenario?.items[0];
+
+            return {
+              ...nextOverride,
+              itemId: firstItem?.id ?? "",
+              amountCents: firstItem?.amountCents ?? 0
+            };
+          }
+
+          if (updates.itemId && updates.itemId !== override.itemId) {
+            const scenario = plan.costOfLivingScenarios.find(
+              (item) => item.id === nextOverride.costOfLivingScenarioId
+            );
+            const item = scenario?.items.find(
+              (candidate) => candidate.id === updates.itemId
+            );
+
+            return {
+              ...nextOverride,
+              amountCents: item?.amountCents ?? 0
+            };
+          }
+
+          return nextOverride;
+        })
+      };
+    });
+  };
+
+  const removeCostOfLivingOverride = (overrideId: Id) => {
+    setInputs((current) => ({
+      ...current,
+      costOfLivingItemOverrides: (current.costOfLivingItemOverrides ?? []).filter(
+        (override) => override.id !== overrideId
+      )
+    }));
+  };
+
+  const addPeriodOverride = () => {
+    if (!firstPeriodOverrideTarget) {
+      return;
+    }
+
+    setInputs((current) => ({
+      ...current,
+      periodItemOverrides: [
+        ...(current.periodItemOverrides ?? []),
+        {
+          id: createId("what_if_period_item"),
+          periodId: firstPeriodOverrideTarget.period.id,
+          itemKind: firstPeriodOverrideTarget.itemKind,
+          itemId: firstPeriodOverrideTarget.item.id,
+          amountCents: firstPeriodOverrideTarget.item.amountCents
+        }
+      ]
+    }));
+  };
+
+  const updatePeriodOverride = (
+    overrideId: Id,
+    updates: Partial<WhatIfPeriodItemOverride>
+  ) => {
+    setInputs((current) => {
+      const overrides = current.periodItemOverrides ?? [];
+
+      return {
+        ...current,
+        periodItemOverrides: overrides.map((override) => {
+        if (override.id !== overrideId) {
+          return override;
+        }
+
+        const nextOverride = { ...override, ...updates };
+
+        if (updates.periodId && updates.periodId !== override.periodId) {
+          const period = sortedPeriods.find(
+            (item) => item.id === updates.periodId
+          );
+          const itemKind = findAvailablePeriodItemKind(
+            period,
+            nextOverride.itemKind,
+            overrides,
+            override.id
+          );
+          const firstItem =
+            getPeriodItems(period, itemKind).find(
+              (item) =>
+                !isPeriodTargetTaken(
+                  overrides,
+                  override.id,
+                  nextOverride.periodId,
+                  itemKind,
+                  item.id
+                )
+            ) ?? getPeriodItems(period, itemKind)[0];
+
+          return {
+            ...nextOverride,
+            itemKind,
+            itemId: firstItem?.id ?? "",
+            amountCents: firstItem?.amountCents ?? 0
+          };
+        }
+
+        if (updates.itemKind && updates.itemKind !== override.itemKind) {
+          const period = sortedPeriods.find(
+            (item) => item.id === nextOverride.periodId
+          );
+          const firstItem =
+            getPeriodItems(period, updates.itemKind).find(
+              (item) =>
+                !isPeriodTargetTaken(
+                  overrides,
+                  override.id,
+                  nextOverride.periodId,
+                  updates.itemKind as WhatIfPeriodItemKind,
+                  item.id
+                )
+            ) ?? getPeriodItems(period, updates.itemKind)[0];
+
+          return {
+            ...nextOverride,
+            itemId: firstItem?.id ?? "",
+            amountCents: firstItem?.amountCents ?? 0
+          };
+        }
+
+        if (updates.itemId && updates.itemId !== override.itemId) {
+          const period = sortedPeriods.find(
+            (item) => item.id === nextOverride.periodId
+          );
+          const item = getPeriodItems(period, nextOverride.itemKind).find(
+            (candidate) => candidate.id === updates.itemId
+          );
+
+          return {
+            ...nextOverride,
+            amountCents: item?.amountCents ?? 0
+          };
+        }
+
+        return nextOverride;
+      })
+      };
+    });
+  };
+
+  const removePeriodOverride = (overrideId: Id) => {
+    setInputs((current) => ({
+      ...current,
+      periodItemOverrides: (current.periodItemOverrides ?? []).filter(
+        (override) => override.id !== overrideId
+      )
+    }));
+  };
 
   const resetInputs = () => setInputs(createInitialInputs(plan));
 
@@ -160,7 +370,7 @@ export function WhatIfPage() {
           <>
             {hasChanges ? (
               <Badge variant="warning">
-                {changeCount} edit{changeCount === 1 ? "" : "s"}
+                {changeCount} item edit{changeCount === 1 ? "" : "s"}
               </Badge>
             ) : (
               <Badge variant="muted">Baseline</Badge>
@@ -186,90 +396,81 @@ export function WhatIfPage() {
           <CardHeader>
             <CardTitle>Controls</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="grid gap-4">
-              <Field label="Income multiplier">
-                <Input
-                  min="0"
-                  step="1"
-                  type="number"
-                  value={Math.round(inputs.incomeMultiplier * 100)}
-                  onChange={(event) =>
-                    updateInput({
-                      incomeMultiplier: readNumber(event.target.value, 100) / 100
-                    })
-                  }
-                />
-              </Field>
-              <Field label="Savings rate adjustment">
-                <Input
-                  max="100"
-                  min="-100"
-                  step="1"
-                  type="number"
-                  value={inputs.savingsRateDelta}
-                  onChange={(event) =>
-                    updateInput({
-                      savingsRateDelta: readNumber(event.target.value, 0)
-                    })
-                  }
-                />
-              </Field>
-              <Field label="Cost of living override">
-                <Select
-                  value={inputs.costOfLivingScenarioId ?? ""}
-                  onChange={(event) =>
-                    updateInput({
-                      costOfLivingScenarioId: event.target.value || undefined
-                    })
-                  }
+          <CardContent className="space-y-6">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle>Cost-of-Living Items</CardTitle>
+                <Button
+                  disabled={!firstCostOfLivingOverrideTarget}
+                  onClick={addCostOfLivingOverride}
+                  type="button"
+                  variant="outline"
                 >
-                  <option value="">Keep existing</option>
-                  {plan.costOfLivingScenarios.map((scenario) => (
-                    <option key={scenario.id} value={scenario.id}>
-                      {scenario.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-
-            <div className="border-t border-border pt-5">
-              <div className="grid gap-4">
-                <Field label="Expense period">
-                  <Select
-                    disabled={!sortedPeriods.length}
-                    value={inputs.selectedPeriodId ?? ""}
-                    onChange={(event) =>
-                      updateInput({ selectedPeriodId: event.target.value })
-                    }
-                  >
-                    {sortedPeriods.length ? null : (
-                      <option value="">No periods</option>
-                    )}
-                    {sortedPeriods.map((period) => (
-                      <option key={period.id} value={period.id}>
-                        {period.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="One-time expense">
-                  <MoneyInput
-                    disabled={!selectedPeriod}
-                    valueCents={inputs.oneTimeExpenseCents}
-                    onChange={(value) =>
-                      updateInput({ oneTimeExpenseCents: Math.max(value, 0) })
-                    }
-                  />
-                </Field>
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  COL Item
+                </Button>
               </div>
+              {costOfLivingItemOverrides.length ? (
+                <div className="space-y-3">
+                  {costOfLivingItemOverrides.map((override) => (
+                    <CostOfLivingOverrideRow
+                      key={override.id}
+                      onRemove={removeCostOfLivingOverride}
+                      onUpdate={updateCostOfLivingOverride}
+                      override={override}
+                      overrides={costOfLivingItemOverrides}
+                      plan={plan}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <EmptyOverrideState label="No cost-of-living item edits" />
+              )}
             </div>
 
-            <div className="border-t border-border pt-5">
+            <div className="space-y-3 border-t border-border pt-5">
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle>Period Items</CardTitle>
+                <Button
+                  disabled={!firstPeriodOverrideTarget}
+                  onClick={addPeriodOverride}
+                  type="button"
+                  variant="outline"
+                >
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  Period Item
+                </Button>
+              </div>
+              {periodItemOverrides.length ? (
+                <div className="space-y-3">
+                  {periodItemOverrides.map((override) => (
+                    <PeriodOverrideRow
+                      key={override.id}
+                      onRemove={removePeriodOverride}
+                      onUpdate={updatePeriodOverride}
+                      override={override}
+                      overrides={periodItemOverrides}
+                      periods={sortedPeriods}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <EmptyOverrideState label="No period item edits" />
+              )}
+            </div>
+
+            <div className="space-y-4 border-t border-border pt-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Target className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <CardTitle>Goal Focus</CardTitle>
+                </div>
+                <Badge variant="muted">Comparison only</Badge>
+              </div>
               <div className="grid gap-4">
                 <Field label="Goal">
                   <Select
+                    aria-label="Goal focus"
                     disabled={!plan.goals.length}
                     value={inputs.selectedGoalId ?? ""}
                     onChange={(event) => {
@@ -279,9 +480,7 @@ export function WhatIfPage() {
                       const scenario = goal?.scenarios[0];
                       updateInput({
                         selectedGoalId: goal?.id,
-                        selectedScenarioId: scenario?.id,
-                        goalTargetDate: scenario?.targetDate,
-                        house: undefined
+                        selectedScenarioId: scenario?.id
                       });
                     }}
                   >
@@ -295,6 +494,7 @@ export function WhatIfPage() {
                 </Field>
                 <Field label="Scenario">
                   <Select
+                    aria-label="Goal scenario focus"
                     disabled={!selectedGoal}
                     value={inputs.selectedScenarioId ?? ""}
                     onChange={(event) => {
@@ -302,9 +502,7 @@ export function WhatIfPage() {
                         (item) => item.id === event.target.value
                       );
                       updateInput({
-                        selectedScenarioId: scenario?.id,
-                        goalTargetDate: scenario?.targetDate,
-                        house: undefined
+                        selectedScenarioId: scenario?.id
                       });
                     }}
                   >
@@ -316,99 +514,8 @@ export function WhatIfPage() {
                     ))}
                   </Select>
                 </Field>
-                <Field label="Target date">
-                  <Input
-                    disabled={!selectedScenario}
-                    type="date"
-                    value={inputs.goalTargetDate ?? ""}
-                    onChange={(event) =>
-                      updateInput({ goalTargetDate: event.target.value })
-                    }
-                  />
-                </Field>
               </div>
             </div>
-
-            {housePreview ? (
-              <div className="border-t border-border pt-5">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <CardTitle>House Inputs</CardTitle>
-                  <Badge variant="muted">Selected scenario</Badge>
-                </div>
-                <div className="grid gap-4">
-                  <Field label="Purchase price">
-                    <MoneyInput
-                      valueCents={housePreview.purchasePriceCents}
-                      onChange={(value) =>
-                        updateHouseField("purchasePriceCents", Math.max(value, 0))
-                      }
-                    />
-                  </Field>
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-                    <Field label="Down payment">
-                      <Input
-                        max="100"
-                        min="0"
-                        step="0.1"
-                        type="number"
-                        value={housePreview.downPaymentPercent}
-                        onChange={(event) =>
-                          updateHouseField(
-                            "downPaymentPercent",
-                            readNumber(event.target.value, 0)
-                          )
-                        }
-                      />
-                    </Field>
-                    <Field label="Closing costs">
-                      <Input
-                        max="100"
-                        min="0"
-                        step="0.1"
-                        type="number"
-                        value={housePreview.closingCostPercent}
-                        onChange={(event) =>
-                          updateHouseField(
-                            "closingCostPercent",
-                            readNumber(event.target.value, 0)
-                          )
-                        }
-                      />
-                    </Field>
-                    <Field label="Interest rate">
-                      <Input
-                        max="100"
-                        min="0"
-                        step="0.1"
-                        type="number"
-                        value={housePreview.interestRatePercent}
-                        onChange={(event) =>
-                          updateHouseField(
-                            "interestRatePercent",
-                            readNumber(event.target.value, 0)
-                          )
-                        }
-                      />
-                    </Field>
-                    <Field label="Loan term">
-                      <Input
-                        max="40"
-                        min="1"
-                        step="1"
-                        type="number"
-                        value={housePreview.loanTermYears}
-                        onChange={(event) =>
-                          updateHouseField(
-                            "loanTermYears",
-                            Math.round(readNumber(event.target.value, 1))
-                          )
-                        }
-                      />
-                    </Field>
-                  </div>
-                </div>
-              </div>
-            ) : null}
           </CardContent>
         </Card>
 
@@ -518,6 +625,237 @@ export function WhatIfPage() {
           onConfirm={confirmApply}
         />
       ) : null}
+    </div>
+  );
+}
+
+function EmptyOverrideState({ label }: { label: string }) {
+  return (
+    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+      {label}
+    </div>
+  );
+}
+
+function CostOfLivingOverrideRow({
+  onRemove,
+  onUpdate,
+  override,
+  overrides,
+  plan
+}: {
+  onRemove: (overrideId: Id) => void;
+  onUpdate: (
+    overrideId: Id,
+    updates: Partial<WhatIfCostOfLivingItemOverride>
+  ) => void;
+  override: WhatIfCostOfLivingItemOverride;
+  overrides: WhatIfCostOfLivingItemOverride[];
+  plan: PlanDocument;
+}) {
+  const scenario = plan.costOfLivingScenarios.find(
+    (item) => item.id === override.costOfLivingScenarioId
+  );
+  const selectedItem = scenario?.items.find(
+    (item) => item.id === override.itemId
+  );
+  const changed =
+    selectedItem !== undefined &&
+    normalizeMoneyCents(override.amountCents) !== selectedItem.amountCents;
+
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <Badge variant={changed ? "warning" : "muted"}>
+          {changed ? "Changed" : "Baseline"}
+        </Badge>
+        <Button
+          aria-label="Remove cost-of-living item edit"
+          onClick={() => onRemove(override.id)}
+          size="icon"
+          type="button"
+          variant="ghost"
+        >
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </div>
+      <div className="grid gap-3">
+        <Field label="Scenario">
+          <Select
+            aria-label="Cost-of-living scenario"
+            value={override.costOfLivingScenarioId}
+            onChange={(event) =>
+              onUpdate(override.id, {
+                costOfLivingScenarioId: event.target.value
+              })
+            }
+          >
+            {plan.costOfLivingScenarios.map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>
+                {candidate.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Item">
+          <Select
+            aria-label="Cost-of-living item"
+            disabled={!scenario?.items.length}
+            value={selectedItem?.id ?? ""}
+            onChange={(event) =>
+              onUpdate(override.id, {
+                itemId: event.target.value
+              })
+            }
+          >
+            {scenario?.items.length ? null : <option value="">No items</option>}
+            {scenario?.items.map((item) => (
+              <option
+                disabled={isCostOfLivingTargetTaken(
+                  overrides,
+                  override.id,
+                  scenario.id,
+                  item.id
+                )}
+                key={item.id}
+                value={item.id}
+              >
+                {item.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Amount">
+          <MoneyInput
+            aria-label="Cost-of-living override amount"
+            disabled={!selectedItem}
+            valueCents={override.amountCents}
+            onChange={(value) =>
+              onUpdate(override.id, { amountCents: Math.max(value, 0) })
+            }
+          />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+function PeriodOverrideRow({
+  onRemove,
+  onUpdate,
+  override,
+  overrides,
+  periods
+}: {
+  onRemove: (overrideId: Id) => void;
+  onUpdate: (
+    overrideId: Id,
+    updates: Partial<WhatIfPeriodItemOverride>
+  ) => void;
+  override: WhatIfPeriodItemOverride;
+  overrides: WhatIfPeriodItemOverride[];
+  periods: FinancialPeriod[];
+}) {
+  const period = periods.find((item) => item.id === override.periodId);
+  const items = getPeriodItems(period, override.itemKind);
+  const selectedItem = items.find((item) => item.id === override.itemId);
+  const changed =
+    selectedItem !== undefined &&
+    normalizeMoneyCents(override.amountCents) !== selectedItem.amountCents;
+
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <Badge variant={changed ? "warning" : "muted"}>
+          {changed ? "Changed" : "Baseline"}
+        </Badge>
+        <Button
+          aria-label="Remove period item edit"
+          onClick={() => onRemove(override.id)}
+          size="icon"
+          type="button"
+          variant="ghost"
+        >
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </div>
+      <div className="grid gap-3">
+        <Field label="Period">
+          <Select
+            aria-label="Period"
+            value={override.periodId}
+            onChange={(event) =>
+              onUpdate(override.id, { periodId: event.target.value })
+            }
+          >
+            {periods.map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>
+                {candidate.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Type">
+          <Select
+            aria-label="Period item type"
+            value={override.itemKind}
+            onChange={(event) =>
+              onUpdate(override.id, {
+                itemKind: event.target.value as WhatIfPeriodItemKind
+              })
+            }
+          >
+            {periodItemKindOptions.map((option) => (
+              <option
+                disabled={!getPeriodItems(period, option.value).length}
+                key={option.value}
+                value={option.value}
+              >
+                {option.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Item">
+          <Select
+            aria-label="Period item"
+            disabled={!items.length}
+            value={selectedItem?.id ?? ""}
+            onChange={(event) =>
+              onUpdate(override.id, {
+                itemId: event.target.value
+              })
+            }
+          >
+            {items.length ? null : <option value="">No items</option>}
+            {items.map((item) => (
+              <option
+                disabled={isPeriodTargetTaken(
+                  overrides,
+                  override.id,
+                  override.periodId,
+                  override.itemKind,
+                  item.id
+                )}
+                key={item.id}
+                value={item.id}
+              >
+                {item.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Amount">
+          <MoneyInput
+            aria-label="Period override amount"
+            disabled={!selectedItem}
+            valueCents={override.amountCents}
+            onChange={(value) =>
+              onUpdate(override.id, { amountCents: Math.max(value, 0) })
+            }
+          />
+        </Field>
+      </div>
     </div>
   );
 }
@@ -692,8 +1030,8 @@ function ApplyConfirmationModal({
         <div className="border-b border-border p-5">
           <CardTitle>Apply What-If Edits</CardTitle>
           <p className="mt-2 text-sm text-muted-foreground">
-            This will write {changeCount} edit{changeCount === 1 ? "" : "s"} to
-            the saved plan.
+            This will write {changeCount} item edit
+            {changeCount === 1 ? "" : "s"} to the saved plan.
           </p>
         </div>
         <div className="flex flex-wrap justify-end gap-2 p-5">
@@ -710,18 +1048,13 @@ function ApplyConfirmationModal({
 }
 
 function createInitialInputs(plan: PlanDocument): WhatIfInputs {
-  const firstPeriod = [...plan.periods].sort((a, b) =>
-    a.startDate.localeCompare(b.startDate)
-  )[0];
   const firstGoal = plan.goals[0];
   const firstScenario = firstGoal?.scenarios[0];
 
   return {
     ...defaultWhatIfInputs,
-    selectedPeriodId: firstPeriod?.id,
     selectedGoalId: firstGoal?.id,
-    selectedScenarioId: firstScenario?.id,
-    goalTargetDate: firstScenario?.targetDate
+    selectedScenarioId: firstScenario?.id
   };
 }
 
@@ -730,33 +1063,23 @@ function normalizeInputsForPlan(
   plan: PlanDocument
 ): WhatIfInputs {
   const fallback = createInitialInputs(plan);
-  const periodExists = plan.periods.some(
-    (period) => period.id === inputs.selectedPeriodId
-  );
-  const goal = plan.goals.find((item) => item.id === inputs.selectedGoalId);
-  const scenario = goal?.scenarios.find(
-    (item) => item.id === inputs.selectedScenarioId
-  );
-  const costOfLivingExists =
-    !inputs.costOfLivingScenarioId ||
-    plan.costOfLivingScenarios.some(
-      (scenario) => scenario.id === inputs.costOfLivingScenarioId
-    );
+  const goal =
+    plan.goals.find((item) => item.id === inputs.selectedGoalId) ??
+    plan.goals.find((item) => item.id === fallback.selectedGoalId);
+  const scenario =
+    goal?.scenarios.find((item) => item.id === inputs.selectedScenarioId) ??
+    goal?.scenarios[0];
 
   return {
     ...inputs,
-    costOfLivingScenarioId: costOfLivingExists
-      ? inputs.costOfLivingScenarioId
-      : undefined,
-    selectedPeriodId: periodExists
-      ? inputs.selectedPeriodId
-      : fallback.selectedPeriodId,
+    costOfLivingItemOverrides: (inputs.costOfLivingItemOverrides ?? []).filter(
+      (override) => Boolean(findCostOfLivingItem(plan, override))
+    ),
+    periodItemOverrides: (inputs.periodItemOverrides ?? []).filter((override) =>
+      Boolean(findPeriodItem(plan.periods, override))
+    ),
     selectedGoalId: goal?.id ?? fallback.selectedGoalId,
-    selectedScenarioId: scenario?.id ?? fallback.selectedScenarioId,
-    goalTargetDate:
-      scenario?.targetDate ??
-      (goal?.scenarios[0]?.targetDate || fallback.goalTargetDate),
-    house: scenario && isHouseScenario(scenario) ? inputs.house : undefined
+    selectedScenarioId: scenario?.id ?? fallback.selectedScenarioId
   };
 }
 
@@ -793,64 +1116,228 @@ function createProjectionComparisonData(
 
 function getWhatIfChangeCount(
   inputs: WhatIfInputs,
-  selectedScenario: GoalScenario | undefined
+  plan: PlanDocument
 ): number {
   let count = 0;
-  if (Math.abs(inputs.incomeMultiplier - 1) > 0.0001) {
-    count += 1;
+
+  for (const override of inputs.costOfLivingItemOverrides ?? []) {
+    const item = findCostOfLivingItem(plan, override);
+    if (
+      item &&
+      normalizeMoneyCents(override.amountCents) !== item.amountCents
+    ) {
+      count += 1;
+    }
   }
-  if (inputs.savingsRateDelta !== 0) {
-    count += 1;
+
+  for (const override of inputs.periodItemOverrides ?? []) {
+    const item = findPeriodItem(plan.periods, override);
+    if (
+      item &&
+      normalizeMoneyCents(override.amountCents) !== item.amountCents
+    ) {
+      count += 1;
+    }
   }
-  if (inputs.costOfLivingScenarioId) {
-    count += 1;
-  }
-  if (inputs.oneTimeExpenseCents > 0) {
-    count += 1;
-  }
-  if (
-    selectedScenario &&
-    inputs.goalTargetDate &&
-    inputs.goalTargetDate !== selectedScenario.targetDate
-  ) {
-    count += 1;
-  }
-  if (selectedScenario?.house && hasHouseOverrides(inputs.house, selectedScenario.house)) {
-    count += 1;
-  }
+
   return count;
 }
 
-function hasHouseOverrides(
-  overrides: Partial<HouseGoalFields> | undefined,
-  baseFields: HouseGoalFields
-): boolean {
-  if (!overrides) {
-    return false;
+const periodItemKindOptions: Array<{
+  value: WhatIfPeriodItemKind;
+  label: string;
+}> = [
+  { value: "grossIncome", label: "Income" },
+  { value: "extraExpense", label: "Extra expense" }
+];
+
+function findFirstAvailableCostOfLivingItem(
+  plan: PlanDocument,
+  overrides: WhatIfCostOfLivingItemOverride[]
+):
+  | {
+      scenario: PlanDocument["costOfLivingScenarios"][number];
+      item: CostItem;
+    }
+  | undefined {
+  for (const scenario of plan.costOfLivingScenarios) {
+    const item = scenario.items.find(
+      (candidate) =>
+        !isCostOfLivingTargetTaken(
+          overrides,
+          undefined,
+          scenario.id,
+          candidate.id
+        )
+    );
+    if (item) {
+      return { scenario, item };
+    }
   }
-  return (
-    overrides.purchasePriceCents !== undefined &&
-      overrides.purchasePriceCents !== baseFields.purchasePriceCents
-  ) ||
-    (overrides.downPaymentPercent !== undefined &&
-      overrides.downPaymentPercent !== baseFields.downPaymentPercent) ||
-    (overrides.closingCostPercent !== undefined &&
-      overrides.closingCostPercent !== baseFields.closingCostPercent) ||
-    (overrides.interestRatePercent !== undefined &&
-      overrides.interestRatePercent !== baseFields.interestRatePercent) ||
-    (overrides.loanTermYears !== undefined &&
-      overrides.loanTermYears !== baseFields.loanTermYears);
+  return undefined;
 }
 
-function isHouseScenario(scenario: GoalScenario): boolean {
-  return Boolean(
-    scenario.house && (scenario.type === "house" || scenario.type === undefined)
+function findFirstAvailablePeriodItem(
+  periods: FinancialPeriod[],
+  overrides: WhatIfPeriodItemOverride[]
+):
+  | {
+      period: FinancialPeriod;
+      itemKind: WhatIfPeriodItemKind;
+      item: RecurringMoneyItem;
+    }
+  | undefined {
+  for (const period of periods) {
+    const grossIncomeItem = period.grossIncomeItems.find(
+      (item) =>
+        !isPeriodTargetTaken(
+          overrides,
+          undefined,
+          period.id,
+          "grossIncome",
+          item.id
+        )
+    );
+    if (grossIncomeItem) {
+      return {
+        period,
+        itemKind: "grossIncome",
+        item: grossIncomeItem
+      };
+    }
+
+    const extraExpenseItem = period.extraExpenseItems.find(
+      (item) =>
+        !isPeriodTargetTaken(
+          overrides,
+          undefined,
+          period.id,
+          "extraExpense",
+          item.id
+        )
+    );
+    if (extraExpenseItem) {
+      return {
+        period,
+        itemKind: "extraExpense",
+        item: extraExpenseItem
+      };
+    }
+  }
+  return undefined;
+}
+
+function findAvailablePeriodItemKind(
+  period: FinancialPeriod | undefined,
+  preferredKind: WhatIfPeriodItemKind,
+  overrides: WhatIfPeriodItemOverride[],
+  currentOverrideId: Id | undefined
+): WhatIfPeriodItemKind {
+  if (
+    getPeriodItems(period, preferredKind).some(
+      (item) =>
+        period &&
+        !isPeriodTargetTaken(
+          overrides,
+          currentOverrideId,
+          period.id,
+          preferredKind,
+          item.id
+        )
+    )
+  ) {
+    return preferredKind;
+  }
+
+  return (
+    periodItemKindOptions.find((option) =>
+      getPeriodItems(period, option.value).some(
+        (item) =>
+          period &&
+          !isPeriodTargetTaken(
+            overrides,
+            currentOverrideId,
+            period.id,
+            option.value,
+            item.id
+          )
+      )
+    )?.value ?? preferredKind
   );
 }
 
-function readNumber(value: string, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+function getPeriodItems(
+  period: FinancialPeriod | undefined,
+  itemKind: WhatIfPeriodItemKind
+): RecurringMoneyItem[] {
+  if (!period) {
+    return [];
+  }
+  return itemKind === "grossIncome"
+    ? period.grossIncomeItems
+    : period.extraExpenseItems;
+}
+
+function findCostOfLivingItem(
+  plan: PlanDocument,
+  override: Pick<
+    WhatIfCostOfLivingItemOverride,
+    "costOfLivingScenarioId" | "itemId"
+  >
+): CostItem | undefined {
+  return plan.costOfLivingScenarios
+    .find((scenario) => scenario.id === override.costOfLivingScenarioId)
+    ?.items.find((item) => item.id === override.itemId);
+}
+
+function findPeriodItem(
+  periods: FinancialPeriod[],
+  override: Pick<
+    WhatIfPeriodItemOverride,
+    "itemKind" | "itemId" | "periodId"
+  >
+): RecurringMoneyItem | undefined {
+  const period = periods.find((item) => item.id === override.periodId);
+  return getPeriodItems(period, override.itemKind).find(
+    (item) => item.id === override.itemId
+  );
+}
+
+function isCostOfLivingTargetTaken(
+  overrides: WhatIfCostOfLivingItemOverride[],
+  currentOverrideId: Id | undefined,
+  costOfLivingScenarioId: Id,
+  itemId: Id
+): boolean {
+  return overrides.some(
+    (override) =>
+      override.id !== currentOverrideId &&
+      override.costOfLivingScenarioId === costOfLivingScenarioId &&
+      override.itemId === itemId
+  );
+}
+
+function isPeriodTargetTaken(
+  overrides: WhatIfPeriodItemOverride[],
+  currentOverrideId: Id | undefined,
+  periodId: Id,
+  itemKind: WhatIfPeriodItemKind,
+  itemId: Id
+): boolean {
+  return overrides.some(
+    (override) =>
+      override.id !== currentOverrideId &&
+      override.periodId === periodId &&
+      override.itemKind === itemKind &&
+      override.itemId === itemId
+  );
+}
+
+function normalizeMoneyCents(value: MoneyCents): MoneyCents {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(Math.round(value), 0);
 }
 
 function formatSignedMoney(cents: number): string {

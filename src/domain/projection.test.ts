@@ -104,6 +104,56 @@ describe("projection engine", () => {
     expect(result.months[0].closingSpendableCents).toBe(60027);
   });
 
+  it("limits the projection horizon when an end date is supplied", () => {
+    const plan = basePlan();
+    plan.periods = [
+      {
+        id: "period",
+        name: "Full month",
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+        costOfLivingScenarioId: "col",
+        grossIncomeItems: [
+          {
+            id: "income",
+            name: "Job",
+            category: "Work",
+            amountCents: 100000,
+            cadence: "monthly"
+          }
+        ],
+        extraExpenseItems: [],
+        effectiveTaxRate: 0,
+        savingsRate: 25,
+        charityRate: 10
+      }
+    ];
+    plan.goals = [
+      {
+        id: "goal",
+        name: "Cash goal",
+        scenarios: [
+          {
+            id: "scenario",
+            name: "Target",
+            targetDate: "2026-12-01",
+            targetAmountCents: 0
+          }
+        ]
+      }
+    ];
+
+    const result = projectPlan(plan, { endDate: "2026-01-31" });
+    const finalMonth = result.months.at(-1);
+
+    expect(result.months).toHaveLength(1);
+    expect(finalMonth?.month).toBe("2026-01");
+    expect(result.goalResults[0].availableCashCents).toBe(
+      (finalMonth?.closingSpendableCents ?? 0) +
+        (finalMonth?.closingSavingsCents ?? 0)
+    );
+  });
+
   it("calculates period profit as retained net-worth growth", () => {
     const plan = basePlan();
     plan.startingSpendableCents = 500000;

@@ -82,15 +82,16 @@ test.describe("Long-Term Finance Planner smoke", () => {
     }
   });
 
-  test("what-if lab updates when a global lever changes", async ({ page }) => {
+  test("what-if lab updates when an item override changes", async ({ page }) => {
     await page.goto("/what-if");
 
     await expect(page.getByRole("heading", { name: /what-if lab/i })).toBeVisible();
     await expect(page.getByText(/baseline/i).first()).toBeVisible();
 
-    await page.getByRole("spinbutton").first().fill("125");
+    await page.getByRole("button", { name: /col item/i }).click();
+    await page.getByLabel(/cost-of-living override amount/i).fill("1250");
 
-    await expect(page.getByText(/1 edit/i)).toBeVisible();
+    await expect(page.getByText(/1 item edit/i)).toBeVisible();
     await expect(
       page.getByRole("button", { name: /apply to plan/i })
     ).toBeEnabled();

@@ -81,7 +81,16 @@ function basePlan(): PlanDocument {
             cadence: "monthly"
           }
         ],
-        extraExpenseItems: [],
+        extraExpenseItems: [
+          {
+            id: "move",
+            name: "Move",
+            category: "Logistics",
+            amountCents: 50000,
+            cadence: "oneTime",
+            date: "2026-02-15"
+          }
+        ],
         effectiveTaxRate: 0,
         savingsRate: 95,
         charityRate: 0
@@ -116,77 +125,86 @@ function basePlan(): PlanDocument {
 }
 
 describe("what-if helpers", () => {
-  it("applies global period controls without mutating the source plan", () => {
+  it("applies selected cost-of-living and period item overrides without mutating the source plan", () => {
     const plan = basePlan();
     const result = applyWhatIfInputs(plan, {
       ...defaultWhatIfInputs,
-      incomeMultiplier: 1.1,
-      savingsRateDelta: 10,
-      costOfLivingScenarioId: "lean-col"
+      costOfLivingItemOverrides: [
+        {
+          id: "col-override",
+          costOfLivingScenarioId: "base-col",
+          itemId: "rent",
+          amountCents: 125000
+        }
+      ],
+      periodItemOverrides: [
+        {
+          id: "income-override",
+          periodId: "period-2",
+          itemKind: "grossIncome",
+          itemId: "contract",
+          amountCents: 250000
+        },
+        {
+          id: "expense-override",
+          periodId: "period-2",
+          itemKind: "extraExpense",
+          itemId: "move",
+          amountCents: 75000
+        }
+      ]
     });
 
-    expect(plan.periods[0].grossIncomeItems[0].amountCents).toBe(300000);
-    expect(plan.periods[0].savingsRate).toBe(20);
-    expect(plan.periods[0].costOfLivingScenarioId).toBe("base-col");
-    expect(result.periods[0].grossIncomeItems[0].amountCents).toBe(330000);
-    expect(result.periods[1].grossIncomeItems[0].amountCents).toBe(220000);
-    expect(result.periods[0].savingsRate).toBe(30);
-    expect(result.periods[1].savingsRate).toBe(100);
-    expect(result.periods.every((period) => period.costOfLivingScenarioId === "lean-col")).toBe(true);
+    expect(plan.costOfLivingScenarios[0].items[0].amountCents).toBe(100000);
+    expect(plan.periods[1].grossIncomeItems[0].amountCents).toBe(200000);
+    expect(plan.periods[1].extraExpenseItems[0].amountCents).toBe(50000);
+    expect(result.costOfLivingScenarios[0].items[0].amountCents).toBe(125000);
+    expect(result.costOfLivingScenarios[1].items[0].amountCents).toBe(50000);
+    expect(result.periods[0].grossIncomeItems[0].amountCents).toBe(300000);
+    expect(result.periods[1].grossIncomeItems[0].amountCents).toBe(250000);
+    expect(result.periods[1].extraExpenseItems[0].amountCents).toBe(75000);
   });
 
-  it("adds a one-time expense only to the selected period", () => {
+  it("ignores item overrides that do not match the plan", () => {
     const plan = basePlan();
     const result = applyWhatIfInputs(plan, {
       ...defaultWhatIfInputs,
-      selectedPeriodId: "period-2",
-      oneTimeExpenseCents: 12345
+      costOfLivingItemOverrides: [
+        {
+          id: "missing-col",
+          costOfLivingScenarioId: "missing",
+          itemId: "rent",
+          amountCents: 999999
+        }
+      ],
+      periodItemOverrides: [
+        {
+          id: "missing-item",
+          periodId: "period-2",
+          itemKind: "extraExpense",
+          itemId: "missing",
+          amountCents: 999999
+        }
+      ]
     });
 
-    expect(plan.periods[1].extraExpenseItems).toHaveLength(0);
-    expect(result.periods[0].extraExpenseItems).toHaveLength(0);
-    expect(result.periods[1].extraExpenseItems).toMatchObject([
-      {
-        name: "What-if expense",
-        category: "What-if",
-        amountCents: 12345,
-        cadence: "oneTime",
-        date: "2026-02-01",
-        enabled: true
-      }
-    ]);
-    expect(result.periods[1].extraExpenseItems[0].id).toMatch(
-      /^what_if_expense_/
-    );
-  });
-
-  it("updates the selected goal scenario and house assumptions", () => {
-    const plan = basePlan();
-    const result = applyWhatIfInputs(plan, {
-      ...defaultWhatIfInputs,
-      selectedGoalId: "goal",
-      selectedScenarioId: "scenario",
-      goalTargetDate: "2026-03-01",
-      house: {
-        purchasePriceCents: 35000000,
-        interestRatePercent: 7,
-        loanTermYears: 50
-      }
-    });
-    const scenario = result.goals[0].scenarios[0];
-
-    expect(plan.goals[0].scenarios[0].targetDate).toBe("2026-02-01");
-    expect(scenario.targetDate).toBe("2026-03-01");
-    expect(scenario.house?.purchasePriceCents).toBe(35000000);
-    expect(scenario.house?.interestRatePercent).toBe(7);
-    expect(scenario.house?.loanTermYears).toBe(40);
+    expect(result.costOfLivingScenarios[0].items[0].amountCents).toBe(100000);
+    expect(result.periods[1].extraExpenseItems[0].amountCents).toBe(50000);
   });
 
   it("summarizes projection deltas for the selected goal scenario", () => {
     const plan = basePlan();
     const whatIfPlan = applyWhatIfInputs(plan, {
       ...defaultWhatIfInputs,
-      incomeMultiplier: 1.25,
+      periodItemOverrides: [
+        {
+          id: "income-override",
+          periodId: "period-2",
+          itemKind: "grossIncome",
+          itemId: "contract",
+          amountCents: 300000
+        }
+      ],
       selectedGoalId: "goal",
       selectedScenarioId: "scenario"
     });

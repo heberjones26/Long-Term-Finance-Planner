@@ -42,6 +42,10 @@ type Contribution = {
 
 type TaxProfile = ReturnType<typeof calculatePeriodTaxProfile>;
 
+type ProjectionOptions = {
+  endDate?: string;
+};
+
 const emptyContribution = (): Contribution => ({
   grossIncomeCents: 0,
   taxCents: 0,
@@ -53,7 +57,10 @@ const emptyContribution = (): Contribution => ({
   netSpendableChangeCents: 0
 });
 
-export function projectPlan(plan: PlanDocument): ProjectionResult {
+export function projectPlan(
+  plan: PlanDocument,
+  options: ProjectionOptions = {}
+): ProjectionResult {
   const warnings: ProjectionWarning[] = [];
   const periods = [...plan.periods].sort((a, b) =>
     a.startDate.localeCompare(b.startDate)
@@ -69,7 +76,7 @@ export function projectPlan(plan: PlanDocument): ProjectionResult {
   warnings.push(...validatePeriodTimeline(periods));
   warnings.push(...validateScenarioReferences(periods, colScenarios));
 
-  const months = buildProjectionMonths(plan, periods);
+  const months = buildProjectionMonths(plan, periods, options);
   const reservedGoalContributionCents = sumGoalContributions(plan.goals);
   let spendableBalance = plan.startingSpendableCents;
   let savingsBalance = plan.startingSavingsCents;
@@ -536,7 +543,8 @@ function sumGoalContributions(goals: Goal[]): MoneyCents {
 
 function buildProjectionMonths(
   plan: PlanDocument,
-  periods: FinancialPeriod[]
+  periods: FinancialPeriod[],
+  options: ProjectionOptions
 ): Date[] {
   const periodStarts = periods.map((period) => parseISO(period.startDate));
   const periodEnds = periods.map((period) => parseISO(period.endDate));
@@ -544,7 +552,9 @@ function buildProjectionMonths(
     goal.scenarios.map((scenario) => parseISO(scenario.targetDate))
   );
   const startCandidates = periodStarts.length > 0 ? periodStarts : [new Date()];
-  const endCandidates = [...periodEnds, ...goalDates, ...startCandidates];
+  const endCandidates = options.endDate
+    ? [parseISO(options.endDate)]
+    : [...periodEnds, ...goalDates, ...startCandidates];
   const start = startOfMonth(earliestDate(startCandidates));
   const end = endOfMonth(latestDate(endCandidates));
 

@@ -1,5 +1,5 @@
 import { AlertTriangle, PiggyBank, ReceiptText, Target, Wallet } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Area,
   CartesianGrid,
@@ -277,21 +277,72 @@ function formatSignedMoney(cents: number): string {
 
 export function DashboardPage() {
   const plan = usePlannerStore((state) => state.plan);
-  const projection = useMemo(() => (plan ? projectPlan(plan) : null), [plan]);
+  const [selectedThroughPeriodId, setSelectedThroughPeriodId] = useState("");
+  const sortedPeriods = useMemo(
+    () =>
+      plan
+        ? [...plan.periods].sort((a, b) => a.startDate.localeCompare(b.startDate))
+        : [],
+    [plan]
+  );
+  const selectedThroughIndex = sortedPeriods.findIndex(
+    (period) => period.id === selectedThroughPeriodId
+  );
+  const effectiveThroughIndex =
+    selectedThroughIndex >= 0
+      ? selectedThroughIndex
+      : sortedPeriods.length - 1;
+  const selectedThroughPeriod =
+    effectiveThroughIndex >= 0 ? sortedPeriods[effectiveThroughIndex] : null;
+  const includedPeriods = useMemo(
+    () =>
+      effectiveThroughIndex >= 0
+        ? sortedPeriods.slice(0, effectiveThroughIndex + 1)
+        : [],
+    [effectiveThroughIndex, sortedPeriods]
+  );
+  const filteredPlan = useMemo(() => {
+    if (!plan) {
+      return null;
+    }
+
+    return {
+      ...plan,
+      periods: includedPeriods
+    };
+  }, [includedPeriods, plan]);
+  const projectionEndDate =
+    sortedPeriods.length > 0 && effectiveThroughIndex < sortedPeriods.length - 1
+      ? selectedThroughPeriod?.endDate
+      : undefined;
+  const projection = useMemo(
+    () =>
+      filteredPlan
+        ? projectPlan(filteredPlan, { endDate: projectionEndDate })
+        : null,
+    [filteredPlan, projectionEndDate]
+  );
   const realityAdjustment = useMemo(
     () =>
-      plan && projection ? analyzeRealityAdjustment(plan, projection) : null,
-    [plan, projection]
+      filteredPlan && projection
+        ? analyzeRealityAdjustment(filteredPlan, projection)
+        : null,
+    [filteredPlan, projection]
   );
   const today = useMemo(() => getTodayLocalDate(), []);
 
-  if (!plan || !projection) {
+  if (!plan || !filteredPlan || !projection) {
     return null;
   }
 
-  const periodById = new Map(plan.periods.map((period) => [period.id, period]));
+  const includedPeriodIds = new Set(
+    includedPeriods.map((period) => period.id)
+  );
   const periodNameById = new Map(
     projection.periodSummaries.map((period) => [period.periodId, period.name])
+  );
+  const periodSummaryById = new Map(
+    projection.periodSummaries.map((period) => [period.periodId, period])
   );
   const currentPeriodIds = new Set(
     plan.periods
@@ -359,6 +410,12 @@ export function DashboardPage() {
         title="Dashboard"
         actions={
           <div className="flex flex-wrap gap-2">
+            {selectedThroughPeriod ? (
+              <Badge variant="default">
+                View: {includedPeriods.length} of {sortedPeriods.length} through{" "}
+                {selectedThroughPeriod.name}
+              </Badge>
+            ) : null}
             {currentPeriodNames.length ? (
               <Badge variant="success">
                 Current: {currentPeriodNames.join(", ")}
@@ -407,7 +464,11 @@ export function DashboardPage() {
         <MetricCard
           label="Cumulative taxes"
           value={formatMoney(projection.totals.cumulativeTaxCents)}
-          detail={`${projection.periodSummaries.length} period${projection.periodSummaries.length === 1 ? "" : "s"}`}
+          detail={
+            sortedPeriods.length === includedPeriods.length
+              ? `${includedPeriods.length} period${includedPeriods.length === 1 ? "" : "s"}`
+              : `${includedPeriods.length} of ${sortedPeriods.length} periods`
+          }
           icon={<ReceiptText className="h-5 w-5" aria-hidden="true" />}
         />
         <MetricCard
@@ -592,25 +653,39 @@ export function DashboardPage() {
             <CardTitle>Periods</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {projection.periodSummaries.map((period) => {
-              const sourcePeriod = periodById.get(period.periodId);
-              const current = currentPeriodIds.has(period.periodId);
-              const auditCompleted = Boolean(sourcePeriod?.audit?.completedAt);
-              const auditReady = sourcePeriod
-                ? isPeriodPast(sourcePeriod, today) && !auditCompleted
-                : false;
+            {sortedPeriods.map((sourcePeriod) => {
+              const period = periodSummaryById.get(sourcePeriod.id);
+              const current = currentPeriodIds.has(sourcePeriod.id);
+              const included = includedPeriodIds.has(sourcePeriod.id);
+              const selectedThrough =
+                selectedThroughPeriod?.id === sourcePeriod.id;
+              const auditCompleted = Boolean(sourcePeriod.audit?.completedAt);
+              const auditReady =
+                isPeriodPast(sourcePeriod, today) && !auditCompleted;
 
               return (
-                <div
+                <button
+                  aria-pressed={selectedThrough}
                   className={cn(
-                    "grid gap-3 rounded-md border border-border bg-background p-4 sm:grid-cols-5",
-                    current && "border-emerald-300 bg-emerald-50/70"
+                    "grid w-full gap-3 rounded-md border border-border bg-background p-4 text-left transition-colors hover:border-primary hover:bg-primary/5 sm:grid-cols-5",
+                    current && included && "border-emerald-300 bg-emerald-50/70",
+                    selectedThrough && "border-primary bg-primary/5",
+                    !included && "opacity-70"
                   )}
-                  key={period.periodId}
+                  key={sourcePeriod.id}
+                  onClick={() => setSelectedThroughPeriodId(sourcePeriod.id)}
+                  type="button"
                 >
                   <div className="sm:col-span-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium">{period.name}</p>
+                      <p className="font-medium">{sourcePeriod.name}</p>
+                      {selectedThrough ? (
+                        <Badge variant="default">Through</Badge>
+                      ) : included ? (
+                        <Badge variant="success">Included</Badge>
+                      ) : (
+                        <Badge variant="muted">Excluded</Badge>
+                      )}
                       {current ? <Badge variant="success">Current</Badge> : null}
                       {auditCompleted ? (
                         <Badge variant="success">Audited</Badge>
@@ -619,28 +694,28 @@ export function DashboardPage() {
                       ) : null}
                     </div>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      {period.startDate} to {period.endDate}
+                      {sourcePeriod.startDate} to {sourcePeriod.endDate}
                     </p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Taxes</p>
                     <p className="font-semibold">
-                      {formatMoney(period.taxCents)}
+                      {period ? formatMoney(period.taxCents) : "-"}
                     </p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Profit</p>
                     <p className="font-semibold">
-                      {formatMoney(period.profitCents)}
+                      {period ? formatMoney(period.profitCents) : "-"}
                     </p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Savings end</p>
                     <p className="font-semibold">
-                      {formatMoney(period.savingsEndingCents)}
+                      {period ? formatMoney(period.savingsEndingCents) : "-"}
                     </p>
                   </div>
-                </div>
+                </button>
               );
             })}
           </CardContent>
