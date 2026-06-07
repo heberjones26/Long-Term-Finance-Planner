@@ -10,6 +10,7 @@ import {
   CalendarPlus,
   ClipboardCheck,
   Copy,
+  Pencil,
   Plus,
   Save,
   Trash2,
@@ -20,6 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { MoneyInput } from "../components/MoneyInput";
 import { PageHeader } from "../components/PageHeader";
+import { PillToggle } from "../components/PillToggle";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -946,12 +948,20 @@ function PeriodAuditModal({
               Mark audited
             </Button>
             <Button
+              disabled={!audit.completedAt}
+              onClick={() => onChange(removeAuditCompletion(audit))}
+              type="button"
+              variant="outline"
+            >
+              Undo audited
+            </Button>
+            <Button
               disabled={!hasAudit}
               onClick={() => onChange(undefined)}
               type="button"
               variant="destructive"
             >
-              Clear audit
+              Delete audit
             </Button>
           </div>
         </div>
@@ -1006,6 +1016,12 @@ function createDefaultPeriodAudit(
   };
 }
 
+function removeAuditCompletion(audit: PeriodAudit): PeriodAudit {
+  const nextAudit = structuredClone(audit);
+  delete nextAudit.completedAt;
+  return nextAudit;
+}
+
 function calculateAuditProfitCents(audit: PeriodAudit): number {
   return (
     audit.actualGrossIncomeCents -
@@ -1047,6 +1063,7 @@ function PeriodItemSection({
   ) => void;
   title: string;
 }) {
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const { handleSubmit, register, reset, watch } = useForm<PeriodItemForm>({
     defaultValues: {
       name: "",
@@ -1057,6 +1074,12 @@ function PeriodItemSection({
     }
   });
   const cadence = watch("cadence");
+
+  useEffect(() => {
+    if (editingItemId && !items.some((item) => item.id === editingItemId)) {
+      setEditingItemId(null);
+    }
+  }, [editingItemId, items]);
 
   const submit = handleSubmit((values) => {
     const amountCents = dollarsToCents(values.amount);
@@ -1143,6 +1166,7 @@ function PeriodItemSection({
             <tbody>
               {items.map((item) => {
                 const enabled = item.enabled !== false;
+                const isEditing = editingItemId === item.id;
 
                 return (
                   <tr
@@ -1153,100 +1177,151 @@ function PeriodItemSection({
                     key={item.id}
                   >
                     <td className="px-3 py-2">
-                      <input
-                        aria-label={`${item.name} included in totals`}
+                      <PillToggle
                         checked={enabled}
-                        className="h-4 w-4 rounded border-input accent-primary"
-                        onChange={(event) =>
+                        label={`${item.name} included in totals`}
+                        onChange={(checked) =>
                           onUpdate(item.id, (draftItem) => {
-                            draftItem.enabled = event.target.checked;
-                          })
-                        }
-                        type="checkbox"
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <Input
-                        aria-label={`Name for ${item.name}`}
-                        className="min-w-40"
-                        value={item.name}
-                        onChange={(event) =>
-                          onUpdate(item.id, (draftItem) => {
-                            draftItem.name = event.target.value;
+                            draftItem.enabled = checked;
                           })
                         }
                       />
                     </td>
                     <td className="px-3 py-2">
-                      <Input
-                        aria-label={`Category for ${item.name}`}
-                        className="min-w-36"
-                        value={item.category}
-                        onChange={(event) =>
-                          onUpdate(item.id, (draftItem) => {
-                            draftItem.category = event.target.value;
-                          })
-                        }
-                      />
+                      {isEditing ? (
+                        <Input
+                          aria-label={`Name for ${item.name}`}
+                          className="min-w-40"
+                          value={item.name}
+                          onChange={(event) =>
+                            onUpdate(item.id, (draftItem) => {
+                              draftItem.name = event.target.value;
+                            })
+                          }
+                        />
+                      ) : (
+                        <span className="font-medium">{item.name}</span>
+                      )}
                     </td>
                     <td className="px-3 py-2">
-                      <MoneyInput
-                        aria-label={`Amount for ${item.name}`}
-                        className="min-w-28"
-                        valueCents={item.amountCents}
-                        onChange={(value) =>
-                          onUpdate(item.id, (draftItem) => {
-                            draftItem.amountCents = Math.max(value, 0);
-                          })
-                        }
-                      />
+                      {isEditing ? (
+                        <Input
+                          aria-label={`Category for ${item.name}`}
+                          className="min-w-36"
+                          value={item.category}
+                          onChange={(event) =>
+                            onUpdate(item.id, (draftItem) => {
+                              draftItem.category = event.target.value;
+                            })
+                          }
+                        />
+                      ) : (
+                        item.category
+                      )}
                     </td>
                     <td className="px-3 py-2">
-                      <Select
-                        aria-label={`Cadence for ${item.name}`}
-                        className="min-w-32"
-                        value={item.cadence}
-                        onChange={(event) =>
-                          onUpdate(item.id, (draftItem) => {
-                            const nextCadence = event.target.value as Cadence;
-                            draftItem.cadence = nextCadence;
-                            draftItem.date =
-                              nextCadence === "oneTime"
-                                ? draftItem.date ?? format(new Date(), "yyyy-MM-dd")
-                                : undefined;
-                          })
-                        }
-                      >
-                        <option value="monthly">Monthly</option>
-                        <option value="weekly">Weekly</option>
-                        <option value="yearly">Yearly</option>
-                        <option value="oneTime">One-time</option>
-                      </Select>
+                      {isEditing ? (
+                        <MoneyInput
+                          aria-label={`Amount for ${item.name}`}
+                          className="min-w-28"
+                          valueCents={item.amountCents}
+                          onChange={(value) =>
+                            onUpdate(item.id, (draftItem) => {
+                              draftItem.amountCents = Math.max(value, 0);
+                            })
+                          }
+                        />
+                      ) : (
+                        formatMoney(item.amountCents)
+                      )}
                     </td>
                     <td className="px-3 py-2">
-                      <Input
-                        aria-label={`Date for ${item.name}`}
-                        className="min-w-36"
-                        disabled={item.cadence !== "oneTime"}
-                        type="date"
-                        value={item.date ?? ""}
-                        onChange={(event) =>
-                          onUpdate(item.id, (draftItem) => {
-                            draftItem.date = event.target.value;
-                          })
-                        }
-                      />
+                      {isEditing ? (
+                        <Select
+                          aria-label={`Cadence for ${item.name}`}
+                          className="min-w-32"
+                          value={item.cadence}
+                          onChange={(event) =>
+                            onUpdate(item.id, (draftItem) => {
+                              const nextCadence = event.target.value as Cadence;
+                              draftItem.cadence = nextCadence;
+                              draftItem.date =
+                                nextCadence === "oneTime"
+                                  ? draftItem.date ??
+                                    format(new Date(), "yyyy-MM-dd")
+                                  : undefined;
+                            })
+                          }
+                        >
+                          <option value="monthly">Monthly</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="yearly">Yearly</option>
+                          <option value="oneTime">One-time</option>
+                        </Select>
+                      ) : (
+                        <span className="capitalize">
+                          {item.cadence === "oneTime"
+                            ? "One-time"
+                            : item.cadence}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEditing ? (
+                        <Input
+                          aria-label={`Date for ${item.name}`}
+                          className="min-w-36"
+                          disabled={item.cadence !== "oneTime"}
+                          type="date"
+                          value={item.date ?? ""}
+                          onChange={(event) =>
+                            onUpdate(item.id, (draftItem) => {
+                              draftItem.date = event.target.value;
+                            })
+                          }
+                        />
+                      ) : (
+                        item.date ?? "-"
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <Button
-                        aria-label={`Delete ${item.name}`}
-                        onClick={() => onDelete(item.id)}
-                        size="icon"
-                        type="button"
-                        variant="ghost"
-                      >
-                        <Trash2 className="h-4 w-4" aria-hidden="true" />
-                      </Button>
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          aria-label={
+                            isEditing
+                              ? `Done editing ${item.name}`
+                              : `Edit ${item.name}`
+                          }
+                          onClick={() =>
+                            setEditingItemId(isEditing ? null : item.id)
+                          }
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          {isEditing ? null : (
+                            <Pencil
+                              className="h-3.5 w-3.5"
+                              aria-hidden="true"
+                            />
+                          )}
+                          {isEditing ? "Done" : "Edit"}
+                        </Button>
+                        <Button
+                          aria-label={`Delete ${item.name}`}
+                          onClick={() => {
+                            onDelete(item.id);
+                            if (editingItemId === item.id) {
+                              setEditingItemId(null);
+                            }
+                          }}
+                          size="icon"
+                          type="button"
+                          variant="ghost"
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );

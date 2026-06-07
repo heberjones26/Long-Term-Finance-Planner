@@ -2,9 +2,10 @@ import { AlertTriangle, PiggyBank, ReceiptText, Target, Wallet } from "lucide-re
 import { useMemo } from "react";
 import {
   Area,
-  AreaChart,
   CartesianGrid,
+  ComposedChart,
   Legend,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -21,6 +22,11 @@ import {
   isPeriodPast
 } from "../domain/periods";
 import { projectPlan } from "../domain/projection";
+import {
+  analyzeRealityAdjustment,
+  type RealityDriftMetric,
+  type RealityGoalImpact
+} from "../domain/realityAdjustment";
 import { cn } from "../lib/utils";
 import { usePlannerStore } from "../store/plannerStore";
 
@@ -29,6 +35,7 @@ type ProjectionChartDatum = {
   Spendable: number;
   Savings: number;
   "Net worth": number;
+  "Reality-adjusted"?: number;
   Taxes: number;
   openingSpendableCents: number;
   openingSavingsCents: number;
@@ -44,6 +51,8 @@ type ProjectionChartDatum = {
   closingSavingsCents: number;
   cumulativeTaxCents: number;
   netWorthCents: number;
+  adjustedNetWorthCents?: number;
+  adjustedNetWorthDeltaCents?: number;
   reservedGoalContributionCents: number;
   activePeriods: string;
 };
@@ -108,6 +117,18 @@ function ProjectionChartTooltip({
           />
         ) : null}
         <TooltipRow label="Cumulative taxes" value={datum.cumulativeTaxCents} />
+        {datum.adjustedNetWorthCents !== undefined ? (
+          <>
+            <TooltipRow
+              label="Reality-adjusted"
+              value={datum.adjustedNetWorthCents}
+            />
+            <TooltipRow
+              label="Reality delta"
+              value={datum.adjustedNetWorthDeltaCents ?? 0}
+            />
+          </>
+        ) : null}
         <TooltipRow
           className="pt-1 font-semibold"
           label="Net worth"
@@ -139,9 +160,129 @@ function TooltipRow({
   );
 }
 
+function RealityDriftCard({ metric }: { metric: RealityDriftMetric }) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-sm font-medium text-muted-foreground">
+            {metric.label}
+          </p>
+          <Badge variant={metric.impactCents >= 0 ? "success" : "warning"}>
+            {formatSignedMoney(metric.impactCents)}
+          </Badge>
+        </div>
+        <p className="mt-2 text-xl font-semibold tracking-normal">
+          {formatMetricHeadline(metric)}
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {formatMetricDetail(metric)}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RealityGoalImpactCard({ impact }: { impact: RealityGoalImpact }) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-sm font-medium text-muted-foreground">
+            Goal timing
+          </p>
+          <Badge variant={getGoalImpactBadgeVariant(impact)}>
+            {formatGoalImpactValue(impact)}
+          </Badge>
+        </div>
+        <p className="mt-2 text-xl font-semibold tracking-normal">
+          {impact.goalName}
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {formatGoalImpactDetail(impact)}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatMetricHeadline(metric: RealityDriftMetric): string {
+  if (metric.ratio === null) {
+    return formatSignedMoney(metric.deltaCents);
+  }
+
+  if (metric.role === "savings") {
+    return `${formatPercent(metric.ratio * 100)} follow-through`;
+  }
+
+  const deltaPercent = (metric.ratio - 1) * 100;
+  const direction = deltaPercent >= 0 ? "higher" : "lower";
+
+  return `${formatPercent(Math.abs(deltaPercent))} ${direction}`;
+}
+
+function formatMetricDetail(metric: RealityDriftMetric): string {
+  const planned = formatMoney(metric.plannedCents, { compact: true });
+  const actual = formatMoney(metric.actualCents, { compact: true });
+
+  if (metric.role === "savings") {
+    return `Actual ${actual} vs ${planned} planned.`;
+  }
+
+  return `${actual} actual vs ${planned} planned.`;
+}
+
+function formatGoalImpactValue(impact: RealityGoalImpact): string {
+  if (impact.monthDelta === null) {
+    return "Beyond chart";
+  }
+  if (impact.monthDelta > 0) {
+    return `${impact.monthDelta} mo later`;
+  }
+  if (impact.monthDelta < 0) {
+    return `${Math.abs(impact.monthDelta)} mo sooner`;
+  }
+  return "On target";
+}
+
+function formatGoalImpactDetail(impact: RealityGoalImpact): string {
+  if (!impact.adjustedTargetLabel) {
+    return `${impact.scenarioName} does not reach ${formatMoney(
+      impact.requiredCashCents,
+      { compact: true }
+    )} within the chart.`;
+  }
+
+  return `${impact.scenarioName}: ${impact.plannedTargetLabel} planned, ${impact.adjustedTargetLabel} adjusted.`;
+}
+
+function getGoalImpactBadgeVariant(
+  impact: RealityGoalImpact
+): "success" | "warning" | "danger" {
+  if (impact.monthDelta === null) {
+    return "danger";
+  }
+  if (impact.monthDelta > 0) {
+    return "warning";
+  }
+  return "success";
+}
+
+function formatSignedMoney(cents: number): string {
+  const normalizedCents = Object.is(cents, -0) ? 0 : cents;
+  return normalizedCents > 0
+    ? `+${formatMoney(normalizedCents, { compact: true })}`
+    : formatMoney(normalizedCents, { compact: true });
+}
+
 export function DashboardPage() {
   const plan = usePlannerStore((state) => state.plan);
   const projection = useMemo(() => (plan ? projectPlan(plan) : null), [plan]);
+  const realityAdjustment = useMemo(
+    () =>
+      plan && projection ? analyzeRealityAdjustment(plan, projection) : null,
+    [plan, projection]
+  );
   const today = useMemo(() => getTodayLocalDate(), []);
 
   if (!plan || !projection) {
@@ -160,14 +301,19 @@ export function DashboardPage() {
   const currentPeriodNames = projection.periodSummaries
     .filter((period) => currentPeriodIds.has(period.periodId))
     .map((period) => period.name);
+  const adjustedMonthByKey = new Map(
+    realityAdjustment?.months.map((month) => [month.month, month]) ?? []
+  );
+  const hasRealityAdjustment = Boolean(realityAdjustment?.hasAuditSignal);
+  const primaryGoalImpact = realityAdjustment?.goalImpacts[0];
   const chartData = projection.months.map<ProjectionChartDatum>((month) => {
     const netWorthCents =
       month.closingSpendableCents + month.closingSavingsCents;
+    const adjustedMonth = adjustedMonthByKey.get(month.month);
     const activePeriods = month.activePeriodIds
       .map((periodId) => periodNameById.get(periodId))
       .filter((periodName): periodName is string => Boolean(periodName));
-
-    return {
+    const datum: ProjectionChartDatum = {
       month: month.label,
       Spendable: month.closingSpendableCents / 100,
       Savings: month.closingSavingsCents / 100,
@@ -193,6 +339,14 @@ export function DashboardPage() {
         ? activePeriods.join(", ")
         : "No active period"
     };
+
+    if (hasRealityAdjustment && adjustedMonth) {
+      datum["Reality-adjusted"] = adjustedMonth.adjustedNetWorthCents / 100;
+      datum.adjustedNetWorthCents = adjustedMonth.adjustedNetWorthCents;
+      datum.adjustedNetWorthDeltaCents = adjustedMonth.netWorthDeltaCents;
+    }
+
+    return datum;
   });
 
   const lastMonth = projection.months.at(-1);
@@ -268,6 +422,32 @@ export function DashboardPage() {
         />
       </section>
 
+      {hasRealityAdjustment && realityAdjustment ? (
+        <section className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {realityAdjustment.biggestDrifts.slice(0, 3).map((metric) => (
+            <RealityDriftCard key={metric.key} metric={metric} />
+          ))}
+          {primaryGoalImpact ? (
+            <RealityGoalImpactCard impact={primaryGoalImpact} />
+          ) : (
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm font-medium text-muted-foreground">
+                  Reality adjustment
+                </p>
+                <p className="mt-2 text-xl font-semibold tracking-normal">
+                  {realityAdjustment.auditCount} audit
+                  {realityAdjustment.auditCount === 1 ? "" : "s"}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Applied to projected months.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </section>
+      ) : null}
+
       <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(360px,0.8fr)]">
         <Card>
           <CardHeader>
@@ -276,7 +456,7 @@ export function DashboardPage() {
           <CardContent>
             <div className="h-[340px] w-full">
               <ResponsiveContainer>
-                <AreaChart data={chartData} margin={{ left: 0, right: 18 }}>
+                <ComposedChart data={chartData} margin={{ left: 0, right: 18 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" minTickGap={32} />
                   <YAxis tickFormatter={(value) => `$${Number(value) / 1000}k`} />
@@ -311,7 +491,18 @@ export function DashboardPage() {
                     strokeWidth={2}
                     activeDot={{ r: 4 }}
                   />
-                </AreaChart>
+                  {hasRealityAdjustment ? (
+                    <Line
+                      activeDot={{ r: 4 }}
+                      dataKey="Reality-adjusted"
+                      dot={false}
+                      stroke="#be123c"
+                      strokeDasharray="6 4"
+                      strokeWidth={2}
+                      type="monotone"
+                    />
+                  ) : null}
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           </CardContent>
@@ -395,7 +586,7 @@ export function DashboardPage() {
         </Card>
       </section>
 
-      <section className="mt-6 grid gap-6 xl:grid-cols-2">
+      <section className="mt-6">
         <Card>
           <CardHeader>
             <CardTitle>Periods</CardTitle>
@@ -454,7 +645,9 @@ export function DashboardPage() {
             })}
           </CardContent>
         </Card>
+      </section>
 
+      <section className="mt-6">
         <Card>
           <CardHeader>
             <CardTitle>Monthly Projection</CardTitle>

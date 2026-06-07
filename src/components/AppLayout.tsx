@@ -2,6 +2,7 @@ import {
   BarChart3,
   CalendarRange,
   Database,
+  FlaskConical,
   Home,
   LayoutDashboard,
   Target
@@ -14,6 +15,7 @@ const navItems = [
   { to: "/cost-of-living", label: "Cost of Living", icon: Home },
   { to: "/periods", label: "Periods", icon: CalendarRange },
   { to: "/goals", label: "Goals", icon: Target },
+  { to: "/what-if", label: "What-If", icon: FlaskConical },
   { to: "/settings", label: "Settings", icon: Database }
 ];
 
@@ -63,7 +65,7 @@ export function AppLayout() {
 
       <nav
         aria-label="Mobile navigation"
-        className="fixed left-0 top-[calc(100dvh-5rem)] z-[100] grid h-20 w-dvw grid-cols-5 border-t border-border bg-card/95 px-2 py-2 shadow-soft backdrop-blur lg:hidden"
+        className="fixed left-0 top-[calc(100dvh-5rem)] z-[100] grid h-20 w-dvw grid-cols-6 border-t border-border bg-card/95 px-2 py-2 shadow-soft backdrop-blur lg:hidden"
       >
         {navItems.map((item) => (
           <NavLink
