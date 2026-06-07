@@ -1,10 +1,11 @@
 import { AlertTriangle, PiggyBank, ReceiptText, Target, Wallet } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Area,
-  AreaChart,
   CartesianGrid,
+  ComposedChart,
   Legend,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -15,28 +16,389 @@ import { PageHeader } from "../components/PageHeader";
 import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { formatMoney, formatPercent } from "../domain/money";
+import {
+  getTodayLocalDate,
+  isPeriodCurrent,
+  isPeriodPast
+} from "../domain/periods";
 import { projectPlan } from "../domain/projection";
+import {
+  analyzeRealityAdjustment,
+  type RealityDriftMetric,
+  type RealityGoalImpact
+} from "../domain/realityAdjustment";
+import { cn } from "../lib/utils";
 import { usePlannerStore } from "../store/plannerStore";
 
-export function DashboardPage() {
-  const plan = usePlannerStore((state) => state.plan);
-  const projection = useMemo(() => (plan ? projectPlan(plan) : null), [plan]);
+type ProjectionChartDatum = {
+  month: string;
+  Spendable: number;
+  Savings: number;
+  "Net worth": number;
+  "Reality-adjusted"?: number;
+  Taxes: number;
+  openingSpendableCents: number;
+  openingSavingsCents: number;
+  grossIncomeCents: number;
+  taxCents: number;
+  afterTaxIncomeCents: number;
+  costOfLivingCents: number;
+  extraExpenseCents: number;
+  charityCents: number;
+  plannedSavingsCents: number;
+  netSpendableChangeCents: number;
+  closingSpendableCents: number;
+  closingSavingsCents: number;
+  cumulativeTaxCents: number;
+  netWorthCents: number;
+  adjustedNetWorthCents?: number;
+  adjustedNetWorthDeltaCents?: number;
+  reservedGoalContributionCents: number;
+  activePeriods: string;
+};
 
-  if (!plan || !projection) {
+type ProjectionChartTooltipProps = {
+  active?: boolean;
+  payload?: Array<{ payload?: ProjectionChartDatum }>;
+  label?: string | number;
+};
+
+function ProjectionChartTooltip({
+  active,
+  payload,
+  label
+}: ProjectionChartTooltipProps) {
+  const datum = payload?.[0]?.payload;
+
+  if (!active || !datum) {
     return null;
   }
 
-  const chartData = projection.months.map((month) => ({
-    month: month.label,
-    Spendable: month.closingSpendableCents / 100,
-    Savings: month.closingSavingsCents / 100,
-    "Net worth":
-      (month.closingSpendableCents +
-        month.closingSavingsCents +
-        projection.totals.reservedGoalContributionCents) /
-      100,
-    Taxes: month.cumulativeTaxCents / 100
-  }));
+  const rows = [
+    { label: "Gross income", value: datum.grossIncomeCents },
+    { label: "Tax", value: -datum.taxCents },
+    { label: "After-tax income", value: datum.afterTaxIncomeCents },
+    { label: "Cost of living", value: -datum.costOfLivingCents },
+    { label: "Extra expenses", value: -datum.extraExpenseCents },
+    { label: "Charity", value: -datum.charityCents },
+    { label: "Planned savings", value: datum.plannedSavingsCents },
+    { label: "Spendable change", value: datum.netSpendableChangeCents }
+  ];
+
+  return (
+    <div className="w-[280px] rounded-md border border-border bg-card p-3 text-sm text-card-foreground shadow-soft">
+      <div className="mb-3 border-b border-border pb-2">
+        <p className="font-semibold">{label}</p>
+        <p className="text-xs text-muted-foreground">{datum.activePeriods}</p>
+      </div>
+
+      <div className="space-y-1.5">
+        <TooltipRow label="Opening cash" value={datum.openingSpendableCents} />
+        <TooltipRow label="Opening savings" value={datum.openingSavingsCents} />
+      </div>
+
+      <div className="my-3 border-t border-border" />
+
+      <div className="space-y-1.5">
+        {rows.map((row) => (
+          <TooltipRow key={row.label} label={row.label} value={row.value} />
+        ))}
+      </div>
+
+      <div className="my-3 border-t border-border" />
+
+      <div className="space-y-1.5">
+        <TooltipRow label="Ending cash" value={datum.closingSpendableCents} />
+        <TooltipRow label="Ending savings" value={datum.closingSavingsCents} />
+        {datum.reservedGoalContributionCents > 0 ? (
+          <TooltipRow
+            label="Reserved in savings"
+            value={datum.reservedGoalContributionCents}
+          />
+        ) : null}
+        <TooltipRow label="Cumulative taxes" value={datum.cumulativeTaxCents} />
+        {datum.adjustedNetWorthCents !== undefined ? (
+          <>
+            <TooltipRow
+              label="Reality-adjusted"
+              value={datum.adjustedNetWorthCents}
+            />
+            <TooltipRow
+              label="Reality delta"
+              value={datum.adjustedNetWorthDeltaCents ?? 0}
+            />
+          </>
+        ) : null}
+        <TooltipRow
+          className="pt-1 font-semibold"
+          label="Net worth"
+          value={datum.netWorthCents}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TooltipRow({
+  className,
+  label,
+  value
+}: {
+  className?: string;
+  label: string;
+  value: number;
+}) {
+  const displayValue = Object.is(value, -0) ? 0 : value;
+
+  return (
+    <div className={`flex items-center justify-between gap-4 ${className ?? ""}`}>
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium tabular-nums">
+        {formatMoney(displayValue)}
+      </span>
+    </div>
+  );
+}
+
+function RealityDriftCard({ metric }: { metric: RealityDriftMetric }) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-sm font-medium text-muted-foreground">
+            {metric.label}
+          </p>
+          <Badge variant={metric.impactCents >= 0 ? "success" : "warning"}>
+            {formatSignedMoney(metric.impactCents)}
+          </Badge>
+        </div>
+        <p className="mt-2 text-xl font-semibold tracking-normal">
+          {formatMetricHeadline(metric)}
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {formatMetricDetail(metric)}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RealityGoalImpactCard({ impact }: { impact: RealityGoalImpact }) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-sm font-medium text-muted-foreground">
+            Goal timing
+          </p>
+          <Badge variant={getGoalImpactBadgeVariant(impact)}>
+            {formatGoalImpactValue(impact)}
+          </Badge>
+        </div>
+        <p className="mt-2 text-xl font-semibold tracking-normal">
+          {impact.goalName}
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {formatGoalImpactDetail(impact)}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatMetricHeadline(metric: RealityDriftMetric): string {
+  if (metric.ratio === null) {
+    return formatSignedMoney(metric.deltaCents);
+  }
+
+  if (metric.role === "savings") {
+    return `${formatPercent(metric.ratio * 100)} follow-through`;
+  }
+
+  const deltaPercent = (metric.ratio - 1) * 100;
+  const direction = deltaPercent >= 0 ? "higher" : "lower";
+
+  return `${formatPercent(Math.abs(deltaPercent))} ${direction}`;
+}
+
+function formatMetricDetail(metric: RealityDriftMetric): string {
+  const planned = formatMoney(metric.plannedCents, { compact: true });
+  const actual = formatMoney(metric.actualCents, { compact: true });
+
+  if (metric.role === "savings") {
+    return `Actual ${actual} vs ${planned} planned.`;
+  }
+
+  return `${actual} actual vs ${planned} planned.`;
+}
+
+function formatGoalImpactValue(impact: RealityGoalImpact): string {
+  if (impact.monthDelta === null) {
+    return "Beyond chart";
+  }
+  if (impact.monthDelta > 0) {
+    return `${impact.monthDelta} mo later`;
+  }
+  if (impact.monthDelta < 0) {
+    return `${Math.abs(impact.monthDelta)} mo sooner`;
+  }
+  return "On target";
+}
+
+function formatGoalImpactDetail(impact: RealityGoalImpact): string {
+  if (!impact.adjustedTargetLabel) {
+    return `${impact.scenarioName} does not reach ${formatMoney(
+      impact.requiredCashCents,
+      { compact: true }
+    )} within the chart.`;
+  }
+
+  return `${impact.scenarioName}: ${impact.plannedTargetLabel} planned, ${impact.adjustedTargetLabel} adjusted.`;
+}
+
+function getGoalImpactBadgeVariant(
+  impact: RealityGoalImpact
+): "success" | "warning" | "danger" {
+  if (impact.monthDelta === null) {
+    return "danger";
+  }
+  if (impact.monthDelta > 0) {
+    return "warning";
+  }
+  return "success";
+}
+
+function formatSignedMoney(cents: number): string {
+  const normalizedCents = Object.is(cents, -0) ? 0 : cents;
+  return normalizedCents > 0
+    ? `+${formatMoney(normalizedCents, { compact: true })}`
+    : formatMoney(normalizedCents, { compact: true });
+}
+
+export function DashboardPage() {
+  const plan = usePlannerStore((state) => state.plan);
+  const [selectedThroughPeriodId, setSelectedThroughPeriodId] = useState("");
+  const sortedPeriods = useMemo(
+    () =>
+      plan
+        ? [...plan.periods].sort((a, b) => a.startDate.localeCompare(b.startDate))
+        : [],
+    [plan]
+  );
+  const selectedThroughIndex = sortedPeriods.findIndex(
+    (period) => period.id === selectedThroughPeriodId
+  );
+  const effectiveThroughIndex =
+    selectedThroughIndex >= 0
+      ? selectedThroughIndex
+      : sortedPeriods.length - 1;
+  const selectedThroughPeriod =
+    effectiveThroughIndex >= 0 ? sortedPeriods[effectiveThroughIndex] : null;
+  const includedPeriods = useMemo(
+    () =>
+      effectiveThroughIndex >= 0
+        ? sortedPeriods.slice(0, effectiveThroughIndex + 1)
+        : [],
+    [effectiveThroughIndex, sortedPeriods]
+  );
+  const filteredPlan = useMemo(() => {
+    if (!plan) {
+      return null;
+    }
+
+    return {
+      ...plan,
+      periods: includedPeriods
+    };
+  }, [includedPeriods, plan]);
+  const projectionEndDate =
+    sortedPeriods.length > 0 && effectiveThroughIndex < sortedPeriods.length - 1
+      ? selectedThroughPeriod?.endDate
+      : undefined;
+  const projection = useMemo(
+    () =>
+      filteredPlan
+        ? projectPlan(filteredPlan, { endDate: projectionEndDate })
+        : null,
+    [filteredPlan, projectionEndDate]
+  );
+  const realityAdjustment = useMemo(
+    () =>
+      filteredPlan && projection
+        ? analyzeRealityAdjustment(filteredPlan, projection)
+        : null,
+    [filteredPlan, projection]
+  );
+  const today = useMemo(() => getTodayLocalDate(), []);
+
+  if (!plan || !filteredPlan || !projection) {
+    return null;
+  }
+
+  const includedPeriodIds = new Set(
+    includedPeriods.map((period) => period.id)
+  );
+  const periodNameById = new Map(
+    projection.periodSummaries.map((period) => [period.periodId, period.name])
+  );
+  const periodSummaryById = new Map(
+    projection.periodSummaries.map((period) => [period.periodId, period])
+  );
+  const currentPeriodIds = new Set(
+    plan.periods
+      .filter((period) => isPeriodCurrent(period, today))
+      .map((period) => period.id)
+  );
+  const currentPeriodNames = projection.periodSummaries
+    .filter((period) => currentPeriodIds.has(period.periodId))
+    .map((period) => period.name);
+  const adjustedMonthByKey = new Map(
+    realityAdjustment?.months.map((month) => [month.month, month]) ?? []
+  );
+  const hasRealityAdjustment = Boolean(realityAdjustment?.hasAuditSignal);
+  const primaryGoalImpact = realityAdjustment?.goalImpacts[0];
+  const chartData = projection.months.map<ProjectionChartDatum>((month) => {
+    const netWorthCents =
+      month.closingSpendableCents + month.closingSavingsCents;
+    const adjustedMonth = adjustedMonthByKey.get(month.month);
+    const activePeriods = month.activePeriodIds
+      .map((periodId) => periodNameById.get(periodId))
+      .filter((periodName): periodName is string => Boolean(periodName));
+    const datum: ProjectionChartDatum = {
+      month: month.label,
+      Spendable: month.closingSpendableCents / 100,
+      Savings: month.closingSavingsCents / 100,
+      "Net worth": netWorthCents / 100,
+      Taxes: month.cumulativeTaxCents / 100,
+      openingSpendableCents: month.openingSpendableCents,
+      openingSavingsCents: month.openingSavingsCents,
+      grossIncomeCents: month.grossIncomeCents,
+      taxCents: month.taxCents,
+      afterTaxIncomeCents: month.afterTaxIncomeCents,
+      costOfLivingCents: month.costOfLivingCents,
+      extraExpenseCents: month.extraExpenseCents,
+      charityCents: month.charityCents,
+      plannedSavingsCents: month.plannedSavingsCents,
+      netSpendableChangeCents: month.netSpendableChangeCents,
+      closingSpendableCents: month.closingSpendableCents,
+      closingSavingsCents: month.closingSavingsCents,
+      cumulativeTaxCents: month.cumulativeTaxCents,
+      netWorthCents,
+      reservedGoalContributionCents:
+        projection.totals.reservedGoalContributionCents,
+      activePeriods: activePeriods.length
+        ? activePeriods.join(", ")
+        : "No active period"
+    };
+
+    if (hasRealityAdjustment && adjustedMonth) {
+      datum["Reality-adjusted"] = adjustedMonth.adjustedNetWorthCents / 100;
+      datum.adjustedNetWorthCents = adjustedMonth.adjustedNetWorthCents;
+      datum.adjustedNetWorthDeltaCents = adjustedMonth.netWorthDeltaCents;
+    }
+
+    return datum;
+  });
 
   const lastMonth = projection.months.at(-1);
   const firstGoal = projection.goalResults[0];
@@ -47,13 +409,40 @@ export function DashboardPage() {
         eyebrow={plan.name}
         title="Dashboard"
         actions={
-          <Badge variant={projection.warnings.length ? "warning" : "success"}>
-            {projection.warnings.length
-              ? `${projection.warnings.length} warning${projection.warnings.length === 1 ? "" : "s"}`
-              : "Plan balanced"}
-          </Badge>
+          <div className="flex flex-wrap gap-2">
+            {selectedThroughPeriod ? (
+              <Badge variant="default">
+                View: {includedPeriods.length} of {sortedPeriods.length} through{" "}
+                {selectedThroughPeriod.name}
+              </Badge>
+            ) : null}
+            {currentPeriodNames.length ? (
+              <Badge variant="success">
+                Current: {currentPeriodNames.join(", ")}
+              </Badge>
+            ) : null}
+            <Badge variant={projection.warnings.length ? "warning" : "success"}>
+              {projection.warnings.length
+                ? `${projection.warnings.length} warning${projection.warnings.length === 1 ? "" : "s"}`
+                : "Plan balanced"}
+            </Badge>
+          </div>
         }
       />
+
+      {projection.warnings.length ? (
+        <section className="mb-6 space-y-2">
+          {projection.warnings.map((warning) => (
+            <div
+              className="flex gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+              key={warning.id}
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{warning.message}</span>
+            </div>
+          ))}
+        </section>
+      ) : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
@@ -61,7 +450,7 @@ export function DashboardPage() {
           value={formatMoney(projection.totals.endingNetWorthCents)}
           detail={
             lastMonth
-              ? `Cash + savings + goals through ${lastMonth.label}`
+              ? `Cash + savings through ${lastMonth.label}`
               : undefined
           }
           icon={<Wallet className="h-5 w-5" aria-hidden="true" />}
@@ -75,7 +464,11 @@ export function DashboardPage() {
         <MetricCard
           label="Cumulative taxes"
           value={formatMoney(projection.totals.cumulativeTaxCents)}
-          detail={`${projection.periodSummaries.length} period${projection.periodSummaries.length === 1 ? "" : "s"}`}
+          detail={
+            sortedPeriods.length === includedPeriods.length
+              ? `${includedPeriods.length} period${includedPeriods.length === 1 ? "" : "s"}`
+              : `${includedPeriods.length} of ${sortedPeriods.length} periods`
+          }
           icon={<ReceiptText className="h-5 w-5" aria-hidden="true" />}
         />
         <MetricCard
@@ -90,22 +483,49 @@ export function DashboardPage() {
         />
       </section>
 
+      {hasRealityAdjustment && realityAdjustment ? (
+        <section className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {realityAdjustment.biggestDrifts.slice(0, 3).map((metric) => (
+            <RealityDriftCard key={metric.key} metric={metric} />
+          ))}
+          {primaryGoalImpact ? (
+            <RealityGoalImpactCard impact={primaryGoalImpact} />
+          ) : (
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm font-medium text-muted-foreground">
+                  Reality adjustment
+                </p>
+                <p className="mt-2 text-xl font-semibold tracking-normal">
+                  {realityAdjustment.auditCount} audit
+                  {realityAdjustment.auditCount === 1 ? "" : "s"}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Applied to projected months.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </section>
+      ) : null}
+
       <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(360px,0.8fr)]">
         <Card>
           <CardHeader>
             <CardTitle>Projection</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="pointer-events-none h-[340px] w-full">
+            <div className="h-[340px] w-full">
               <ResponsiveContainer>
-                <AreaChart data={chartData} margin={{ left: 0, right: 18 }}>
+                <ComposedChart data={chartData} margin={{ left: 0, right: 18 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" minTickGap={32} />
                   <YAxis tickFormatter={(value) => `$${Number(value) / 1000}k`} />
                   <Tooltip
-                    formatter={(value) =>
-                      formatMoney(Math.round(Number(value) * 100))
-                    }
+                    content={<ProjectionChartTooltip />}
+                    cursor={{ stroke: "#94a3b8", strokeWidth: 1 }}
+                    isAnimationActive={false}
+                    wrapperStyle={{ outline: "none", zIndex: 50 }}
                   />
                   <Legend />
                   <Area
@@ -114,6 +534,7 @@ export function DashboardPage() {
                     fillOpacity={0.18}
                     stroke="#0f766e"
                     strokeWidth={2}
+                    activeDot={{ r: 4 }}
                   />
                   <Area
                     dataKey="Savings"
@@ -121,6 +542,7 @@ export function DashboardPage() {
                     fillOpacity={0.14}
                     stroke="#2563eb"
                     strokeWidth={2}
+                    activeDot={{ r: 4 }}
                   />
                   <Area
                     dataKey="Taxes"
@@ -128,8 +550,20 @@ export function DashboardPage() {
                     fillOpacity={0.12}
                     stroke="#d97706"
                     strokeWidth={2}
+                    activeDot={{ r: 4 }}
                   />
-                </AreaChart>
+                  {hasRealityAdjustment ? (
+                    <Line
+                      activeDot={{ r: 4 }}
+                      dataKey="Reality-adjusted"
+                      dot={false}
+                      stroke="#be123c"
+                      strokeDasharray="6 4"
+                      strokeWidth={2}
+                      type="monotone"
+                    />
+                  ) : null}
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           </CardContent>
@@ -213,38 +647,82 @@ export function DashboardPage() {
         </Card>
       </section>
 
-      <section className="mt-6 grid gap-6 xl:grid-cols-2">
+      <section className="mt-6">
         <Card>
           <CardHeader>
             <CardTitle>Periods</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {projection.periodSummaries.map((period) => (
-              <div
-                className="grid gap-3 rounded-md border border-border bg-background p-4 sm:grid-cols-4"
-                key={period.periodId}
-              >
-                <div className="sm:col-span-2">
-                  <p className="font-medium">{period.name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {period.startDate} to {period.endDate}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Taxes</p>
-                  <p className="font-semibold">{formatMoney(period.taxCents)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Savings end</p>
-                  <p className="font-semibold">
-                    {formatMoney(period.savingsEndingCents)}
-                  </p>
-                </div>
-              </div>
-            ))}
+            {sortedPeriods.map((sourcePeriod) => {
+              const period = periodSummaryById.get(sourcePeriod.id);
+              const current = currentPeriodIds.has(sourcePeriod.id);
+              const included = includedPeriodIds.has(sourcePeriod.id);
+              const selectedThrough =
+                selectedThroughPeriod?.id === sourcePeriod.id;
+              const auditCompleted = Boolean(sourcePeriod.audit?.completedAt);
+              const auditReady =
+                isPeriodPast(sourcePeriod, today) && !auditCompleted;
+
+              return (
+                <button
+                  aria-pressed={selectedThrough}
+                  className={cn(
+                    "grid w-full gap-3 rounded-md border border-border bg-background p-4 text-left transition-colors hover:border-primary hover:bg-primary/5 sm:grid-cols-5",
+                    current && included && "border-emerald-300 bg-emerald-50/70",
+                    selectedThrough && "border-primary bg-primary/5",
+                    !included && "opacity-70"
+                  )}
+                  key={sourcePeriod.id}
+                  onClick={() => setSelectedThroughPeriodId(sourcePeriod.id)}
+                  type="button"
+                >
+                  <div className="sm:col-span-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium">{sourcePeriod.name}</p>
+                      {selectedThrough ? (
+                        <Badge variant="default">Through</Badge>
+                      ) : included ? (
+                        <Badge variant="success">Included</Badge>
+                      ) : (
+                        <Badge variant="muted">Excluded</Badge>
+                      )}
+                      {current ? <Badge variant="success">Current</Badge> : null}
+                      {auditCompleted ? (
+                        <Badge variant="success">Audited</Badge>
+                      ) : auditReady ? (
+                        <Badge variant="warning">Audit ready</Badge>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {sourcePeriod.startDate} to {sourcePeriod.endDate}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Taxes</p>
+                    <p className="font-semibold">
+                      {period ? formatMoney(period.taxCents) : "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Profit</p>
+                    <p className="font-semibold">
+                      {period ? formatMoney(period.profitCents) : "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Savings end</p>
+                    <p className="font-semibold">
+                      {period ? formatMoney(period.savingsEndingCents) : "-"}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
           </CardContent>
         </Card>
+      </section>
 
+      <section className="mt-6">
         <Card>
           <CardHeader>
             <CardTitle>Monthly Projection</CardTitle>
@@ -267,9 +745,7 @@ export function DashboardPage() {
                 <tbody>
                   {projection.months.map((month) => {
                     const netWorthCents =
-                      month.closingSpendableCents +
-                      month.closingSavingsCents +
-                      projection.totals.reservedGoalContributionCents;
+                      month.closingSpendableCents + month.closingSavingsCents;
 
                     return (
                       <tr className="border-t border-border" key={month.month}>
@@ -315,26 +791,6 @@ export function DashboardPage() {
         </Card>
       </section>
 
-      {projection.warnings.length ? (
-        <section className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Warnings</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {projection.warnings.map((warning) => (
-                <div
-                  className="flex gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
-                  key={warning.id}
-                >
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{warning.message}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </section>
-      ) : null}
     </div>
   );
 }

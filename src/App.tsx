@@ -8,6 +8,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { GoalsPage } from "./pages/GoalsPage";
 import { PeriodsPage } from "./pages/PeriodsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { WhatIfPage } from "./pages/WhatIfPage";
 import { usePlannerStore } from "./store/plannerStore";
 
 export default function App() {
@@ -59,6 +60,7 @@ export default function App() {
           <Route path="cost-of-living" element={<CostOfLivingPage />} />
           <Route path="periods" element={<PeriodsPage />} />
           <Route path="goals" element={<GoalsPage />} />
+          <Route path="what-if" element={<WhatIfPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

@@ -23,6 +23,11 @@ const destinations: Destination[] = [
     evidence: /goals?|target|milestone|progress|retirement\s+goal|savings\s+goal/i
   },
   {
+    label: "What-If",
+    navName: /what-if/i,
+    evidence: /what-if\s+lab|projection\s+comparison|controls/i
+  },
+  {
     label: "Settings",
     navName: /settings|preferences/i,
     evidence: /settings|preferences|assumptions|currency|inflation|profile/i
@@ -75,6 +80,21 @@ test.describe("Long-Term Finance Planner smoke", () => {
         await expect(sectionEvidence(page, destination)).toBeVisible();
       });
     }
+  });
+
+  test("what-if lab updates when an item override changes", async ({ page }) => {
+    await page.goto("/what-if");
+
+    await expect(page.getByRole("heading", { name: /what-if lab/i })).toBeVisible();
+    await expect(page.getByText(/baseline/i).first()).toBeVisible();
+
+    await page.getByRole("button", { name: /col item/i }).click();
+    await page.getByLabel(/cost-of-living override amount/i).fill("1250");
+
+    await expect(page.getByText(/1 item edit/i)).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /apply to plan/i })
+    ).toBeEnabled();
   });
 });
 

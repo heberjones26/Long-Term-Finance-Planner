@@ -145,6 +145,9 @@ export function calculateFicaTaxCents(
 
 function annualizeIncomeItems(items: RecurringMoneyItem[]): MoneyCents {
   return items.reduce((total, item) => {
+    if (item.enabled === false) {
+      return total;
+    }
     if (item.cadence === "monthly") {
       return total + item.amountCents * 12;
     }

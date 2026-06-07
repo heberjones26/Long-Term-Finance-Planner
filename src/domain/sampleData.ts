@@ -209,6 +209,7 @@ export function createSeedPlan(): PlanDocument {
           {
             id: targetScenarioId,
             name: "Starter home",
+            type: "house",
             targetDate: "2030-06-01",
             targetAmountCents: 6000000,
             house: {
@@ -225,6 +226,7 @@ export function createSeedPlan(): PlanDocument {
           {
             id: stretchScenarioId,
             name: "20% down",
+            type: "house",
             targetDate: "2030-06-01",
             targetAmountCents: 8000000,
             house: {
