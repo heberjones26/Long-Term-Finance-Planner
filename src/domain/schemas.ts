@@ -9,13 +9,15 @@ const taxFilingStatusSchema = z.enum([
   "headOfHousehold",
   "marriedSeparate"
 ]);
+const goalTypeSchema = z.enum(["house", "other"]);
 
 export const costItemSchema = z.object({
   id: z.string(),
   name: z.string().min(1),
   category: z.string().min(1),
   amountCents: moneyCentsSchema.nonnegative(),
-  cadence: z.enum(["monthly", "yearly"])
+  cadence: z.enum(["monthly", "yearly"]),
+  enabled: z.boolean().optional()
 });
 
 export const costOfLivingScenarioSchema = z.object({
@@ -31,7 +33,19 @@ export const recurringMoneyItemSchema = z.object({
   category: z.string().min(1),
   amountCents: moneyCentsSchema.nonnegative(),
   cadence: z.enum(["monthly", "yearly", "weekly", "oneTime"]),
-  date: localDateSchema.optional()
+  date: localDateSchema.optional(),
+  enabled: z.boolean().optional()
+});
+
+export const periodAuditSchema = z.object({
+  actualGrossIncomeCents: moneyCentsSchema.nonnegative(),
+  actualTaxCents: moneyCentsSchema.nonnegative(),
+  actualCostOfLivingCents: moneyCentsSchema.nonnegative(),
+  actualExtraExpenseCents: moneyCentsSchema.nonnegative(),
+  actualCharityCents: moneyCentsSchema.nonnegative(),
+  actualSavingsCents: moneyCentsSchema.nonnegative(),
+  notes: z.string().optional(),
+  completedAt: z.string().optional()
 });
 
 export const financialPeriodSchema = z
@@ -47,7 +61,8 @@ export const financialPeriodSchema = z
     taxFilingStatus: taxFilingStatusSchema.optional(),
     additionalTaxRate: percentSchema.optional(),
     savingsRate: percentSchema,
-    charityRate: percentSchema
+    charityRate: percentSchema,
+    audit: periodAuditSchema.optional()
   })
   .refine((period) => period.startDate <= period.endDate, {
     message: "Period start date must be before the end date.",
@@ -68,6 +83,7 @@ export const houseGoalFieldsSchema = z.object({
 export const goalScenarioSchema = z.object({
   id: z.string(),
   name: z.string().min(1),
+  type: goalTypeSchema.optional(),
   targetDate: localDateSchema,
   targetAmountCents: moneyCentsSchema.nonnegative(),
   house: houseGoalFieldsSchema.optional()

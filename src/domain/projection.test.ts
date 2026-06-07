@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBlankPlan, createSeedPlan } from "./sampleData";
 import {
+  calculateHouseAmortization,
   estimateHousePaymentCents,
   normalizedMonthlyCents,
   projectPlan
@@ -101,6 +102,127 @@ describe("projection engine", () => {
     expect(result.months[0].charityCents).toBe(9235);
     expect(result.months[0].closingSavingsCents).toBe(23088);
     expect(result.months[0].closingSpendableCents).toBe(60027);
+  });
+
+  it("calculates period profit as retained net-worth growth", () => {
+    const plan = basePlan();
+    plan.startingSpendableCents = 500000;
+    plan.startingSavingsCents = 200000;
+    plan.costOfLivingScenarios[0].items = [
+      {
+        id: "rent",
+        name: "Rent",
+        category: "Housing",
+        amountCents: 20000,
+        cadence: "monthly"
+      }
+    ];
+    plan.periods = [
+      {
+        id: "period",
+        name: "Full month",
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+        costOfLivingScenarioId: "col",
+        grossIncomeItems: [
+          {
+            id: "income",
+            name: "Job",
+            category: "Work",
+            amountCents: 100000,
+            cadence: "monthly"
+          }
+        ],
+        extraExpenseItems: [],
+        effectiveTaxRate: 0,
+        savingsRate: 25,
+        charityRate: 10
+      }
+    ];
+
+    const result = projectPlan(plan);
+    const summary = result.periodSummaries[0];
+
+    expect(summary.carryoverInCents).toBe(500000);
+    expect(summary.spendableEndingCents).toBe(540027);
+    expect(summary.savingsEndingCents).toBe(223088);
+    expect(summary.profitCents).toBe(63115);
+  });
+
+  it("excludes disabled income, expense, and cost-of-living items", () => {
+    const plan = basePlan();
+    plan.costOfLivingScenarios[0].items = [
+      {
+        id: "rent",
+        name: "Rent",
+        category: "Housing",
+        amountCents: 10000,
+        cadence: "monthly"
+      },
+      {
+        id: "parking",
+        name: "Parking",
+        category: "Transportation",
+        amountCents: 50000,
+        cadence: "monthly",
+        enabled: false
+      }
+    ];
+    plan.periods = [
+      {
+        id: "period",
+        name: "Full month",
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+        costOfLivingScenarioId: "col",
+        grossIncomeItems: [
+          {
+            id: "income",
+            name: "Job",
+            category: "Work",
+            amountCents: 100000,
+            cadence: "monthly"
+          },
+          {
+            id: "disabled-income",
+            name: "Unused offer",
+            category: "Work",
+            amountCents: 900000,
+            cadence: "monthly",
+            enabled: false
+          }
+        ],
+        extraExpenseItems: [
+          {
+            id: "books",
+            name: "Books",
+            category: "School",
+            amountCents: 20000,
+            cadence: "monthly"
+          },
+          {
+            id: "disabled-books",
+            name: "Optional fees",
+            category: "School",
+            amountCents: 30000,
+            cadence: "monthly",
+            enabled: false
+          }
+        ],
+        effectiveTaxRate: 0,
+        savingsRate: 0,
+        charityRate: 0
+      }
+    ];
+
+    const result = projectPlan(plan);
+
+    expect(result.months[0].grossIncomeCents).toBe(100000);
+    expect(result.months[0].taxCents).toBe(7650);
+    expect(result.months[0].costOfLivingCents).toBe(10000);
+    expect(result.months[0].extraExpenseCents).toBe(20000);
+    expect(result.months[0].closingSpendableCents).toBe(62350);
+    expect(result.periodSummaries[0].annualizedGrossIncomeCents).toBe(1200000);
   });
 
   it("adds optional state and local estimate into the calculated tax rate", () => {
@@ -270,7 +392,7 @@ describe("projection engine", () => {
     expect(result.goalResults[0].surplusOrShortfallCents).toBe(10000);
   });
 
-  it("adds goal contributions to goal feasibility and plan availability", () => {
+  it("reserves goal contributions from savings without increasing net worth", () => {
     const plan = basePlan();
     plan.startingSavingsCents = 100000;
     plan.periods = [
@@ -325,12 +447,12 @@ describe("projection engine", () => {
     expect(result.months[0].openingSavingsCents).toBe(100000);
     expect(result.totals.endingSavingsCents).toBe(100000);
     expect(result.totals.reservedGoalContributionCents).toBe(50000);
-    expect(result.totals.endingAvailableCents).toBe(150000);
-    expect(result.totals.endingNetWorthCents).toBe(150000);
-    expect(houseResult?.unallocatedAvailableCashCents).toBe(100000);
+    expect(result.totals.endingAvailableCents).toBe(100000);
+    expect(result.totals.endingNetWorthCents).toBe(100000);
+    expect(houseResult?.unallocatedAvailableCashCents).toBe(50000);
     expect(houseResult?.contributedFromSavingsCents).toBe(30000);
-    expect(houseResult?.availableCashCents).toBe(130000);
-    expect(carResult?.availableCashCents).toBe(120000);
+    expect(houseResult?.availableCashCents).toBe(80000);
+    expect(carResult?.availableCashCents).toBe(70000);
   });
 
   it("uses goal contributions when calculating available house down payment", () => {
@@ -381,13 +503,49 @@ describe("projection engine", () => {
       (item) => item.goalId === "house"
     );
 
-    expect(houseResult?.unallocatedAvailableCashCents).toBe(5891934);
-    expect(houseResult?.availableCashCents).toBe(8891934);
+    expect(houseResult?.unallocatedAvailableCashCents).toBe(2891934);
+    expect(houseResult?.availableCashCents).toBe(5891934);
     expect(houseResult?.requiredCashCents).toBe(2300000);
     expect(houseResult?.requiredDownPaymentCents).toBe(2000000);
     expect(houseResult?.requiredClosingCostCents).toBe(300000);
-    expect(houseResult?.availableDownPaymentCents).toBe(8591934);
-    expect(houseResult?.availableDownPaymentPercent).toBeCloseTo(85.92, 2);
+    expect(houseResult?.availableDownPaymentCents).toBe(5591934);
+    expect(houseResult?.availableDownPaymentPercent).toBeCloseTo(55.92, 2);
+  });
+
+  it("treats explicit other goals as generic even if stale house fields exist", () => {
+    const plan = basePlan();
+    plan.startingSavingsCents = 100000;
+    plan.goals = [
+      {
+        id: "goal",
+        name: "Emergency fund",
+        scenarios: [
+          {
+            id: "scenario",
+            name: "Base",
+            type: "other",
+            targetDate: "2026-01-15",
+            targetAmountCents: 50000,
+            house: {
+              purchasePriceCents: 10000000,
+              downPaymentPercent: 20,
+              closingCostPercent: 3,
+              interestRatePercent: 6,
+              loanTermYears: 30,
+              annualPropertyTaxPercent: 1,
+              monthlyInsuranceCents: 0,
+              monthlyHoaCents: 0
+            }
+          }
+        ]
+      }
+    ];
+
+    const result = projectPlan(plan);
+
+    expect(result.goalResults[0].requiredCashCents).toBe(50000);
+    expect(result.goalResults[0].estimatedMonthlyPaymentCents).toBeUndefined();
+    expect(result.goalResults[0].requiredDownPaymentCents).toBeUndefined();
   });
 
   it("warns when goal contributions exceed starting savings", () => {
@@ -432,6 +590,32 @@ describe("projection engine", () => {
 
     expect(payment).toBeGreaterThan(210000);
     expect(payment).toBeLessThan(250000);
+  });
+
+  it("calculates a house amortization schedule and payment breakdown", () => {
+    const amortization = calculateHouseAmortization({
+      purchasePriceCents: 40000000,
+      downPaymentPercent: 20,
+      closingCostPercent: 3,
+      interestRatePercent: 6,
+      loanTermYears: 30,
+      annualPropertyTaxPercent: 1,
+      monthlyInsuranceCents: 15000,
+      monthlyHoaCents: 5000
+    });
+
+    expect(amortization.loanPrincipalCents).toBe(32000000);
+    expect(amortization.schedule).toHaveLength(360);
+    expect(amortization.monthlyPrincipalInterestCents).toBeGreaterThan(190000);
+    expect(amortization.monthlyPropertyTaxCents).toBe(33333);
+    expect(amortization.totalMonthlyPaymentCents).toBeGreaterThan(240000);
+    expect(amortization.totalPrincipalCents).toBe(32000000);
+    expect(amortization.totalInterestCents).toBeGreaterThan(0);
+    expect(amortization.firstYearInterestCents).toBeGreaterThan(
+      amortization.firstYearPrincipalCents
+    );
+    expect(amortization.schedule[0].interestCents).toBe(160000);
+    expect(amortization.schedule.at(-1)?.remainingPrincipalCents).toBe(0);
   });
 
   it("projects the seeded plan without crashing", () => {

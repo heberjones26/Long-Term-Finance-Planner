@@ -9,11 +9,17 @@ import { Field, Input, Select, Textarea } from "../components/ui/field";
 import { createId } from "../domain/ids";
 import { formatMoney, formatPercent } from "../domain/money";
 import {
-  estimateHousePaymentCents,
+  calculateHouseAmortization,
+  getGoalScenarioType,
   projectPlan,
   requiredCashForGoalScenario
 } from "../domain/projection";
-import type { Goal, GoalScenario, HouseGoalFields } from "../domain/types";
+import type {
+  Goal,
+  GoalScenario,
+  GoalType,
+  HouseGoalFields
+} from "../domain/types";
 import { isSameDraft } from "../lib/draft";
 import { cn } from "../lib/utils";
 import { usePlannerStore } from "../store/plannerStore";
@@ -58,6 +64,9 @@ export function GoalsPage() {
   const selectedScenario = draftGoal?.scenarios.find(
     (scenario) => scenario.id === selectedScenarioId
   );
+  const selectedScenarioType = selectedScenario
+    ? getGoalScenarioType(selectedScenario)
+    : "other";
   const selectedResult = projection.goalResults.find(
     (result) =>
       result.goalId === selectedGoal?.id &&
@@ -96,7 +105,7 @@ export function GoalsPage() {
     void updatePlan((draft) => {
       const index = draft.goals.findIndex((goal) => goal.id === draftGoal.id);
       if (index >= 0) {
-        draft.goals[index] = structuredClone(draftGoal);
+        draft.goals[index] = normalizeGoalForSave(draftGoal);
       }
       return draft;
     });
@@ -115,9 +124,9 @@ export function GoalsPage() {
           {
             id: scenarioId,
             name: "Base",
+            type: "other",
             targetDate: "2030-01-01",
-            targetAmountCents: 5000000,
-            house: defaultHouseFields()
+            targetAmountCents: 5000000
           }
         ]
       });
@@ -146,13 +155,19 @@ export function GoalsPage() {
     }
     const scenarioId = createId("goal_scenario");
     updateDraftGoal((goal) => {
-      goal.scenarios.push({
+      const source = goal.scenarios[0];
+      const sourceType = source ? getGoalScenarioType(source) : "other";
+      const scenario: GoalScenario = {
         id: scenarioId,
         name: "New scenario",
-        targetDate: goal.scenarios[0]?.targetDate ?? "2030-01-01",
-        targetAmountCents: goal.scenarios[0]?.targetAmountCents ?? 5000000,
-        house: structuredClone(goal.scenarios[0]?.house ?? defaultHouseFields())
-      });
+        type: sourceType,
+        targetDate: source?.targetDate ?? "2030-01-01",
+        targetAmountCents: source?.targetAmountCents ?? 5000000
+      };
+      if (sourceType === "house") {
+        scenario.house = structuredClone(source?.house ?? defaultHouseFields());
+      }
+      goal.scenarios.push(scenario);
     });
     setSelectedScenarioId(scenarioId);
   };
@@ -162,12 +177,20 @@ export function GoalsPage() {
       return;
     }
     const scenarioId = createId("goal_scenario");
+    const scenarioType = getGoalScenarioType(selectedScenario);
     updateDraftGoal((goal) => {
-      goal.scenarios.push({
+      const scenario: GoalScenario = {
         ...structuredClone(selectedScenario),
         id: scenarioId,
-        name: `${selectedScenario.name} copy`
-      });
+        name: `${selectedScenario.name} copy`,
+        type: scenarioType
+      };
+      if (scenarioType === "house") {
+        scenario.house = scenario.house ?? defaultHouseFields();
+      } else {
+        delete scenario.house;
+      }
+      goal.scenarios.push(scenario);
     });
     setSelectedScenarioId(scenarioId);
   };
@@ -342,7 +365,7 @@ export function GoalsPage() {
                 <CardTitle>{selectedScenario.name}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-5">
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-3">
                   <Field label="Scenario name">
                     <Input
                       value={selectedScenario.name}
@@ -355,6 +378,29 @@ export function GoalsPage() {
                         )
                       }
                     />
+                  </Field>
+                  <Field label="Goal type">
+                    <Select
+                      value={selectedScenarioType}
+                      onChange={(event) => {
+                        const nextType = event.target.value as GoalType;
+                        updateDraftScenario(
+                          selectedScenario.id,
+                          (scenario) => {
+                            scenario.type = nextType;
+                            if (nextType === "house") {
+                              scenario.house =
+                                scenario.house ?? defaultHouseFields();
+                            } else {
+                              delete scenario.house;
+                            }
+                          }
+                        );
+                      }}
+                    >
+                      <option value="house">House</option>
+                      <option value="other">Custom</option>
+                    </Select>
                   </Field>
                   <Field label="Target date">
                     <Input
@@ -370,7 +416,13 @@ export function GoalsPage() {
                       }
                     />
                   </Field>
-                  <Field label="Cash target">
+                  <Field
+                    label={
+                      selectedScenarioType === "house"
+                        ? "Cash floor"
+                        : "Goal amount"
+                    }
+                  >
                     <MoneyInput
                       valueCents={selectedScenario.targetAmountCents}
                       onChange={(value) =>
@@ -391,17 +443,22 @@ export function GoalsPage() {
                   </Field>
                 </div>
 
-                <HouseFields
-                  fields={selectedScenario.house ?? defaultHouseFields()}
-                  onChange={(house) =>
-                    updateDraftScenario(
-                      selectedScenario.id,
-                      (scenario) => {
-                        scenario.house = house;
-                      }
-                    )
-                  }
-                />
+                {selectedScenarioType === "house" ? (
+                  <HouseFields
+                    fields={selectedScenario.house ?? defaultHouseFields()}
+                    onChange={(house) =>
+                      updateDraftScenario(
+                        selectedScenario.id,
+                        (scenario) => {
+                          scenario.type = "house";
+                          scenario.house = house;
+                        }
+                      )
+                    }
+                  />
+                ) : (
+                  <CustomGoalFields scenario={selectedScenario} />
+                )}
               </CardContent>
             </Card>
 
@@ -469,6 +526,49 @@ export function GoalsPage() {
   );
 }
 
+function normalizeGoalForSave(goal: Goal): Goal {
+  const normalizedGoal = structuredClone(goal);
+  normalizedGoal.scenarios = normalizedGoal.scenarios.map((scenario) => {
+    const scenarioType = getGoalScenarioType(scenario);
+    const normalizedScenario: GoalScenario = {
+      ...scenario,
+      type: scenarioType
+    };
+
+    if (scenarioType === "house") {
+      normalizedScenario.house =
+        normalizedScenario.house ?? defaultHouseFields();
+    } else {
+      delete normalizedScenario.house;
+    }
+
+    return normalizedScenario;
+  });
+
+  return normalizedGoal;
+}
+
+function CustomGoalFields({ scenario }: { scenario: GoalScenario }) {
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-base font-semibold tracking-normal">Custom Goal</h2>
+        <Badge variant="muted">Custom</Badge>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <ResultPill
+          label="Target cash"
+          value={formatMoney(scenario.targetAmountCents)}
+        />
+        <ResultPill
+          label="Required cash"
+          value={formatMoney(requiredCashForGoalScenario(scenario))}
+        />
+      </div>
+    </div>
+  );
+}
+
 function HouseFields({
   fields,
   onChange
@@ -476,6 +576,8 @@ function HouseFields({
   fields: HouseGoalFields;
   onChange: (fields: HouseGoalFields) => void;
 }) {
+  const amortization = calculateHouseAmortization(fields);
+  const schedulePreview = amortization.schedule.slice(0, 12);
   const patch = (updates: Partial<HouseGoalFields>) => {
     onChange({ ...fields, ...updates });
   };
@@ -485,7 +587,7 @@ function HouseFields({
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-base font-semibold tracking-normal">House Calculator</h2>
         <Badge variant="muted">
-          {formatMoney(estimateHousePaymentCents(fields))} / month
+          {formatMoney(amortization.totalMonthlyPaymentCents)} / month
         </Badge>
       </div>
       <div className="grid gap-4 md:grid-cols-3">
@@ -542,6 +644,64 @@ function HouseFields({
             onChange={(value) => patch({ monthlyHoaCents: value })}
           />
         </Field>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-5">
+        <ResultPill
+          label="Loan amount"
+          value={formatMoney(amortization.loanPrincipalCents)}
+        />
+        <ResultPill
+          label="Principal + interest"
+          value={formatMoney(amortization.monthlyPrincipalInterestCents)}
+        />
+        <ResultPill
+          label="Property tax"
+          value={formatMoney(amortization.monthlyPropertyTaxCents)}
+        />
+        <ResultPill
+          label="First-year interest"
+          value={formatMoney(amortization.firstYearInterestCents)}
+        />
+        <ResultPill
+          label="Total interest"
+          value={formatMoney(amortization.totalInterestCents)}
+        />
+      </div>
+
+      <div className="mt-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold tracking-normal">Amortization</h3>
+          <Badge variant="muted">{amortization.payoffMonths} payments</Badge>
+        </div>
+        <div className="max-h-[360px] overflow-auto rounded-md border border-border">
+          <table className="w-full min-w-[720px] text-sm">
+            <thead className="sticky top-0 bg-muted text-left text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Month</th>
+                <th className="px-3 py-2 font-medium">Payment</th>
+                <th className="px-3 py-2 font-medium">Principal</th>
+                <th className="px-3 py-2 font-medium">Interest</th>
+                <th className="px-3 py-2 font-medium">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {schedulePreview.map((row) => (
+                <tr className="border-t border-border" key={row.monthNumber}>
+                  <td className="px-3 py-2 font-medium">{row.monthNumber}</td>
+                  <td className="px-3 py-2">{formatMoney(row.paymentCents)}</td>
+                  <td className="px-3 py-2">
+                    {formatMoney(row.principalCents)}
+                  </td>
+                  <td className="px-3 py-2">{formatMoney(row.interestCents)}</td>
+                  <td className="px-3 py-2">
+                    {formatMoney(row.remainingPrincipalCents)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

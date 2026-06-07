@@ -15,28 +15,185 @@ import { PageHeader } from "../components/PageHeader";
 import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { formatMoney, formatPercent } from "../domain/money";
+import {
+  getTodayLocalDate,
+  isPeriodCurrent,
+  isPeriodPast
+} from "../domain/periods";
 import { projectPlan } from "../domain/projection";
+import { cn } from "../lib/utils";
 import { usePlannerStore } from "../store/plannerStore";
+
+type ProjectionChartDatum = {
+  month: string;
+  Spendable: number;
+  Savings: number;
+  "Net worth": number;
+  Taxes: number;
+  openingSpendableCents: number;
+  openingSavingsCents: number;
+  grossIncomeCents: number;
+  taxCents: number;
+  afterTaxIncomeCents: number;
+  costOfLivingCents: number;
+  extraExpenseCents: number;
+  charityCents: number;
+  plannedSavingsCents: number;
+  netSpendableChangeCents: number;
+  closingSpendableCents: number;
+  closingSavingsCents: number;
+  cumulativeTaxCents: number;
+  netWorthCents: number;
+  reservedGoalContributionCents: number;
+  activePeriods: string;
+};
+
+type ProjectionChartTooltipProps = {
+  active?: boolean;
+  payload?: Array<{ payload?: ProjectionChartDatum }>;
+  label?: string | number;
+};
+
+function ProjectionChartTooltip({
+  active,
+  payload,
+  label
+}: ProjectionChartTooltipProps) {
+  const datum = payload?.[0]?.payload;
+
+  if (!active || !datum) {
+    return null;
+  }
+
+  const rows = [
+    { label: "Gross income", value: datum.grossIncomeCents },
+    { label: "Tax", value: -datum.taxCents },
+    { label: "After-tax income", value: datum.afterTaxIncomeCents },
+    { label: "Cost of living", value: -datum.costOfLivingCents },
+    { label: "Extra expenses", value: -datum.extraExpenseCents },
+    { label: "Charity", value: -datum.charityCents },
+    { label: "Planned savings", value: datum.plannedSavingsCents },
+    { label: "Spendable change", value: datum.netSpendableChangeCents }
+  ];
+
+  return (
+    <div className="w-[280px] rounded-md border border-border bg-card p-3 text-sm text-card-foreground shadow-soft">
+      <div className="mb-3 border-b border-border pb-2">
+        <p className="font-semibold">{label}</p>
+        <p className="text-xs text-muted-foreground">{datum.activePeriods}</p>
+      </div>
+
+      <div className="space-y-1.5">
+        <TooltipRow label="Opening cash" value={datum.openingSpendableCents} />
+        <TooltipRow label="Opening savings" value={datum.openingSavingsCents} />
+      </div>
+
+      <div className="my-3 border-t border-border" />
+
+      <div className="space-y-1.5">
+        {rows.map((row) => (
+          <TooltipRow key={row.label} label={row.label} value={row.value} />
+        ))}
+      </div>
+
+      <div className="my-3 border-t border-border" />
+
+      <div className="space-y-1.5">
+        <TooltipRow label="Ending cash" value={datum.closingSpendableCents} />
+        <TooltipRow label="Ending savings" value={datum.closingSavingsCents} />
+        {datum.reservedGoalContributionCents > 0 ? (
+          <TooltipRow
+            label="Reserved in savings"
+            value={datum.reservedGoalContributionCents}
+          />
+        ) : null}
+        <TooltipRow label="Cumulative taxes" value={datum.cumulativeTaxCents} />
+        <TooltipRow
+          className="pt-1 font-semibold"
+          label="Net worth"
+          value={datum.netWorthCents}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TooltipRow({
+  className,
+  label,
+  value
+}: {
+  className?: string;
+  label: string;
+  value: number;
+}) {
+  const displayValue = Object.is(value, -0) ? 0 : value;
+
+  return (
+    <div className={`flex items-center justify-between gap-4 ${className ?? ""}`}>
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium tabular-nums">
+        {formatMoney(displayValue)}
+      </span>
+    </div>
+  );
+}
 
 export function DashboardPage() {
   const plan = usePlannerStore((state) => state.plan);
   const projection = useMemo(() => (plan ? projectPlan(plan) : null), [plan]);
+  const today = useMemo(() => getTodayLocalDate(), []);
 
   if (!plan || !projection) {
     return null;
   }
 
-  const chartData = projection.months.map((month) => ({
-    month: month.label,
-    Spendable: month.closingSpendableCents / 100,
-    Savings: month.closingSavingsCents / 100,
-    "Net worth":
-      (month.closingSpendableCents +
-        month.closingSavingsCents +
-        projection.totals.reservedGoalContributionCents) /
-      100,
-    Taxes: month.cumulativeTaxCents / 100
-  }));
+  const periodById = new Map(plan.periods.map((period) => [period.id, period]));
+  const periodNameById = new Map(
+    projection.periodSummaries.map((period) => [period.periodId, period.name])
+  );
+  const currentPeriodIds = new Set(
+    plan.periods
+      .filter((period) => isPeriodCurrent(period, today))
+      .map((period) => period.id)
+  );
+  const currentPeriodNames = projection.periodSummaries
+    .filter((period) => currentPeriodIds.has(period.periodId))
+    .map((period) => period.name);
+  const chartData = projection.months.map<ProjectionChartDatum>((month) => {
+    const netWorthCents =
+      month.closingSpendableCents + month.closingSavingsCents;
+    const activePeriods = month.activePeriodIds
+      .map((periodId) => periodNameById.get(periodId))
+      .filter((periodName): periodName is string => Boolean(periodName));
+
+    return {
+      month: month.label,
+      Spendable: month.closingSpendableCents / 100,
+      Savings: month.closingSavingsCents / 100,
+      "Net worth": netWorthCents / 100,
+      Taxes: month.cumulativeTaxCents / 100,
+      openingSpendableCents: month.openingSpendableCents,
+      openingSavingsCents: month.openingSavingsCents,
+      grossIncomeCents: month.grossIncomeCents,
+      taxCents: month.taxCents,
+      afterTaxIncomeCents: month.afterTaxIncomeCents,
+      costOfLivingCents: month.costOfLivingCents,
+      extraExpenseCents: month.extraExpenseCents,
+      charityCents: month.charityCents,
+      plannedSavingsCents: month.plannedSavingsCents,
+      netSpendableChangeCents: month.netSpendableChangeCents,
+      closingSpendableCents: month.closingSpendableCents,
+      closingSavingsCents: month.closingSavingsCents,
+      cumulativeTaxCents: month.cumulativeTaxCents,
+      netWorthCents,
+      reservedGoalContributionCents:
+        projection.totals.reservedGoalContributionCents,
+      activePeriods: activePeriods.length
+        ? activePeriods.join(", ")
+        : "No active period"
+    };
+  });
 
   const lastMonth = projection.months.at(-1);
   const firstGoal = projection.goalResults[0];
@@ -47,13 +204,34 @@ export function DashboardPage() {
         eyebrow={plan.name}
         title="Dashboard"
         actions={
-          <Badge variant={projection.warnings.length ? "warning" : "success"}>
-            {projection.warnings.length
-              ? `${projection.warnings.length} warning${projection.warnings.length === 1 ? "" : "s"}`
-              : "Plan balanced"}
-          </Badge>
+          <div className="flex flex-wrap gap-2">
+            {currentPeriodNames.length ? (
+              <Badge variant="success">
+                Current: {currentPeriodNames.join(", ")}
+              </Badge>
+            ) : null}
+            <Badge variant={projection.warnings.length ? "warning" : "success"}>
+              {projection.warnings.length
+                ? `${projection.warnings.length} warning${projection.warnings.length === 1 ? "" : "s"}`
+                : "Plan balanced"}
+            </Badge>
+          </div>
         }
       />
+
+      {projection.warnings.length ? (
+        <section className="mb-6 space-y-2">
+          {projection.warnings.map((warning) => (
+            <div
+              className="flex gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+              key={warning.id}
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{warning.message}</span>
+            </div>
+          ))}
+        </section>
+      ) : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
@@ -61,7 +239,7 @@ export function DashboardPage() {
           value={formatMoney(projection.totals.endingNetWorthCents)}
           detail={
             lastMonth
-              ? `Cash + savings + goals through ${lastMonth.label}`
+              ? `Cash + savings through ${lastMonth.label}`
               : undefined
           }
           icon={<Wallet className="h-5 w-5" aria-hidden="true" />}
@@ -96,16 +274,17 @@ export function DashboardPage() {
             <CardTitle>Projection</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="pointer-events-none h-[340px] w-full">
+            <div className="h-[340px] w-full">
               <ResponsiveContainer>
                 <AreaChart data={chartData} margin={{ left: 0, right: 18 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" minTickGap={32} />
                   <YAxis tickFormatter={(value) => `$${Number(value) / 1000}k`} />
                   <Tooltip
-                    formatter={(value) =>
-                      formatMoney(Math.round(Number(value) * 100))
-                    }
+                    content={<ProjectionChartTooltip />}
+                    cursor={{ stroke: "#94a3b8", strokeWidth: 1 }}
+                    isAnimationActive={false}
+                    wrapperStyle={{ outline: "none", zIndex: 50 }}
                   />
                   <Legend />
                   <Area
@@ -114,6 +293,7 @@ export function DashboardPage() {
                     fillOpacity={0.18}
                     stroke="#0f766e"
                     strokeWidth={2}
+                    activeDot={{ r: 4 }}
                   />
                   <Area
                     dataKey="Savings"
@@ -121,6 +301,7 @@ export function DashboardPage() {
                     fillOpacity={0.14}
                     stroke="#2563eb"
                     strokeWidth={2}
+                    activeDot={{ r: 4 }}
                   />
                   <Area
                     dataKey="Taxes"
@@ -128,6 +309,7 @@ export function DashboardPage() {
                     fillOpacity={0.12}
                     stroke="#d97706"
                     strokeWidth={2}
+                    activeDot={{ r: 4 }}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -219,29 +401,57 @@ export function DashboardPage() {
             <CardTitle>Periods</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {projection.periodSummaries.map((period) => (
-              <div
-                className="grid gap-3 rounded-md border border-border bg-background p-4 sm:grid-cols-4"
-                key={period.periodId}
-              >
-                <div className="sm:col-span-2">
-                  <p className="font-medium">{period.name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {period.startDate} to {period.endDate}
-                  </p>
+            {projection.periodSummaries.map((period) => {
+              const sourcePeriod = periodById.get(period.periodId);
+              const current = currentPeriodIds.has(period.periodId);
+              const auditCompleted = Boolean(sourcePeriod?.audit?.completedAt);
+              const auditReady = sourcePeriod
+                ? isPeriodPast(sourcePeriod, today) && !auditCompleted
+                : false;
+
+              return (
+                <div
+                  className={cn(
+                    "grid gap-3 rounded-md border border-border bg-background p-4 sm:grid-cols-5",
+                    current && "border-emerald-300 bg-emerald-50/70"
+                  )}
+                  key={period.periodId}
+                >
+                  <div className="sm:col-span-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium">{period.name}</p>
+                      {current ? <Badge variant="success">Current</Badge> : null}
+                      {auditCompleted ? (
+                        <Badge variant="success">Audited</Badge>
+                      ) : auditReady ? (
+                        <Badge variant="warning">Audit ready</Badge>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {period.startDate} to {period.endDate}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Taxes</p>
+                    <p className="font-semibold">
+                      {formatMoney(period.taxCents)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Profit</p>
+                    <p className="font-semibold">
+                      {formatMoney(period.profitCents)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Savings end</p>
+                    <p className="font-semibold">
+                      {formatMoney(period.savingsEndingCents)}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Taxes</p>
-                  <p className="font-semibold">{formatMoney(period.taxCents)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Savings end</p>
-                  <p className="font-semibold">
-                    {formatMoney(period.savingsEndingCents)}
-                  </p>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
 
@@ -267,9 +477,7 @@ export function DashboardPage() {
                 <tbody>
                   {projection.months.map((month) => {
                     const netWorthCents =
-                      month.closingSpendableCents +
-                      month.closingSavingsCents +
-                      projection.totals.reservedGoalContributionCents;
+                      month.closingSpendableCents + month.closingSavingsCents;
 
                     return (
                       <tr className="border-t border-border" key={month.month}>
@@ -315,26 +523,6 @@ export function DashboardPage() {
         </Card>
       </section>
 
-      {projection.warnings.length ? (
-        <section className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Warnings</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {projection.warnings.map((warning) => (
-                <div
-                  className="flex gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
-                  key={warning.id}
-                >
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{warning.message}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </section>
-      ) : null}
     </div>
   );
 }

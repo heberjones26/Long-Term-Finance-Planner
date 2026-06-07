@@ -9,6 +9,7 @@ export type TaxFilingStatus =
   | "marriedJoint"
   | "headOfHousehold"
   | "marriedSeparate";
+export type GoalType = "house" | "other";
 
 export type CostItem = {
   id: Id;
@@ -16,6 +17,7 @@ export type CostItem = {
   category: string;
   amountCents: MoneyCents;
   cadence: Extract<Cadence, "monthly" | "yearly">;
+  enabled?: boolean;
 };
 
 export type CostOfLivingScenario = {
@@ -32,6 +34,18 @@ export type RecurringMoneyItem = {
   amountCents: MoneyCents;
   cadence: Cadence;
   date?: LocalDate;
+  enabled?: boolean;
+};
+
+export type PeriodAudit = {
+  actualGrossIncomeCents: MoneyCents;
+  actualTaxCents: MoneyCents;
+  actualCostOfLivingCents: MoneyCents;
+  actualExtraExpenseCents: MoneyCents;
+  actualCharityCents: MoneyCents;
+  actualSavingsCents: MoneyCents;
+  notes?: string;
+  completedAt?: string;
 };
 
 export type FinancialPeriod = {
@@ -47,6 +61,7 @@ export type FinancialPeriod = {
   additionalTaxRate?: number;
   savingsRate: number;
   charityRate: number;
+  audit?: PeriodAudit;
 };
 
 export type HouseGoalFields = {
@@ -60,9 +75,34 @@ export type HouseGoalFields = {
   monthlyHoaCents: MoneyCents;
 };
 
+export type AmortizationMonth = {
+  monthNumber: number;
+  paymentCents: MoneyCents;
+  principalCents: MoneyCents;
+  interestCents: MoneyCents;
+  remainingPrincipalCents: MoneyCents;
+};
+
+export type HouseAmortization = {
+  loanPrincipalCents: MoneyCents;
+  monthlyPrincipalInterestCents: MoneyCents;
+  monthlyPropertyTaxCents: MoneyCents;
+  monthlyInsuranceCents: MoneyCents;
+  monthlyHoaCents: MoneyCents;
+  totalMonthlyPaymentCents: MoneyCents;
+  totalPrincipalCents: MoneyCents;
+  totalInterestCents: MoneyCents;
+  totalPrincipalInterestCents: MoneyCents;
+  firstYearPrincipalCents: MoneyCents;
+  firstYearInterestCents: MoneyCents;
+  payoffMonths: number;
+  schedule: AmortizationMonth[];
+};
+
 export type GoalScenario = {
   id: Id;
   name: string;
+  type?: GoalType;
   targetDate: LocalDate;
   targetAmountCents: MoneyCents;
   house?: HouseGoalFields;
@@ -124,6 +164,7 @@ export type PeriodSummary = {
   extraExpenseCents: MoneyCents;
   charityCents: MoneyCents;
   plannedSavingsCents: MoneyCents;
+  profitCents: MoneyCents;
   spendableEndingCents: MoneyCents;
   savingsEndingCents: MoneyCents;
 };

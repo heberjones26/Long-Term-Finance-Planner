@@ -6,21 +6,38 @@ import {
   isValid,
   parseISO
 } from "date-fns";
-import { CalendarPlus, Copy, Plus, Save, Trash2, Undo2 } from "lucide-react";
+import {
+  CalendarPlus,
+  ClipboardCheck,
+  Copy,
+  Plus,
+  Save,
+  Trash2,
+  Undo2,
+  X
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
+import { MoneyInput } from "../components/MoneyInput";
 import { PageHeader } from "../components/PageHeader";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Field, Input, Select } from "../components/ui/field";
+import { Field, Input, Select, Textarea } from "../components/ui/field";
 import { createId } from "../domain/ids";
 import { dollarsToCents, formatMoney, formatPercent } from "../domain/money";
+import {
+  getTodayLocalDate,
+  isPeriodCurrent,
+  isPeriodPast
+} from "../domain/periods";
 import { projectPlan } from "../domain/projection";
 import { calculatePeriodTaxProfile, taxFilingStatusLabels } from "../domain/tax";
 import type {
   Cadence,
   FinancialPeriod,
+  PeriodAudit,
+  PeriodSummary,
   RecurringMoneyItem,
   TaxFilingStatus
 } from "../domain/types";
@@ -40,7 +57,23 @@ export function PeriodsPage() {
   const { plan, updatePlan } = usePlannerStore();
   const [selectedPeriodId, setSelectedPeriodId] = useState("");
   const [draftPeriod, setDraftPeriod] = useState<FinancialPeriod | null>(null);
-  const projection = useMemo(() => (plan ? projectPlan(plan) : null), [plan]);
+  const [auditModalOpen, setAuditModalOpen] = useState(false);
+  const projection = useMemo(() => {
+    if (!plan) {
+      return null;
+    }
+    if (!draftPeriod) {
+      return projectPlan(plan);
+    }
+
+    return projectPlan({
+      ...plan,
+      periods: plan.periods.map((period) =>
+        period.id === draftPeriod.id ? draftPeriod : period
+      )
+    });
+  }, [draftPeriod, plan]);
+  const today = useMemo(() => getTodayLocalDate(), []);
 
   const sortedPeriods = useMemo(
     () =>
@@ -48,6 +81,11 @@ export function PeriodsPage() {
         ? [...plan.periods].sort((a, b) => a.startDate.localeCompare(b.startDate))
         : [],
     [plan]
+  );
+  const currentPeriodId = useMemo(
+    () =>
+      sortedPeriods.find((period) => isPeriodCurrent(period, today))?.id ?? "",
+    [sortedPeriods, today]
   );
 
   useEffect(() => {
@@ -58,9 +96,9 @@ export function PeriodsPage() {
       !selectedPeriodId ||
       !plan.periods.some((period) => period.id === selectedPeriodId)
     ) {
-      setSelectedPeriodId(sortedPeriods[0]?.id ?? "");
+      setSelectedPeriodId(currentPeriodId || sortedPeriods[0]?.id || "");
     }
-  }, [plan, selectedPeriodId, sortedPeriods]);
+  }, [currentPeriodId, plan, selectedPeriodId, sortedPeriods]);
 
   const selectedPeriod = plan?.periods.find(
     (period) => period.id === selectedPeriodId
@@ -95,6 +133,14 @@ export function PeriodsPage() {
       updater(next);
       return next;
     });
+  };
+
+  const openAuditForPeriod = (period: FinancialPeriod) => {
+    setSelectedPeriodId(period.id);
+    if (draftPeriod?.id !== period.id) {
+      setDraftPeriod(structuredClone(period));
+    }
+    setAuditModalOpen(true);
   };
 
   const savePeriod = () => {
@@ -166,6 +212,7 @@ export function PeriodsPage() {
       name: `${draftPeriod.name} copy`,
       startDate: format(newStart, "yyyy-MM-dd"),
       endDate: format(newEnd, "yyyy-MM-dd"),
+      audit: undefined,
       grossIncomeItems: draftPeriod.grossIncomeItems.map((item) =>
         duplicateMoneyItem(item, "income", dateOffsetDays)
       ),
@@ -191,7 +238,13 @@ export function PeriodsPage() {
       );
       return draft;
     });
-    const fallback = sortedPeriods.find((period) => period.id !== selectedPeriod.id);
+    setAuditModalOpen(false);
+    const fallback =
+      sortedPeriods.find(
+        (period) =>
+          period.id !== selectedPeriod.id && isPeriodCurrent(period, today)
+      ) ??
+      sortedPeriods.find((period) => period.id !== selectedPeriod.id);
     setSelectedPeriodId(fallback?.id ?? "");
   };
 
@@ -226,24 +279,52 @@ export function PeriodsPage() {
               (item) => item.id === period.costOfLivingScenarioId
             );
             const selected = period.id === selectedPeriodId;
+            const current = isPeriodCurrent(period, today);
+            const past = isPeriodPast(period, today);
             return (
-              <button
+              <div
                 className={cn(
                   "w-full rounded-md border border-border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary",
+                  current && "border-emerald-300 bg-emerald-50/70",
                   selected && "border-primary bg-primary/5"
                 )}
                 key={period.id}
-                onClick={() => setSelectedPeriodId(period.id)}
-                type="button"
               >
-                <p className="font-medium">{period.name}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {period.startDate} to {period.endDate}
-                </p>
-                <Badge className="mt-3" variant="muted">
-                  {scenario?.name ?? "Missing COL"}
-                </Badge>
-              </button>
+                <button
+                  className="w-full text-left"
+                  onClick={() => setSelectedPeriodId(period.id)}
+                  type="button"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="font-medium">{period.name}</p>
+                    {current ? <Badge variant="success">Current</Badge> : null}
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {period.startDate} to {period.endDate}
+                  </p>
+                </button>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="muted">
+                      {scenario?.name ?? "Missing COL"}
+                    </Badge>
+                    {period.audit?.completedAt ? (
+                      <Badge variant="success">Audited</Badge>
+                    ) : past ? (
+                      <Badge variant="warning">Audit ready</Badge>
+                    ) : null}
+                  </div>
+                  <Button
+                    onClick={() => openAuditForPeriod(period)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <ClipboardCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                    Audit
+                  </Button>
+                </div>
+              </div>
             );
           })}
         </aside>
@@ -252,7 +333,10 @@ export function PeriodsPage() {
           <div className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>{draftPeriod.name}</CardTitle>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <CardTitle>{draftPeriod.name}</CardTitle>
+                  <PeriodStatusBadges period={draftPeriod} today={today} />
+                </div>
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="grid gap-4 md:grid-cols-2">
@@ -384,10 +468,14 @@ export function PeriodsPage() {
                 </div>
 
                 {selectedSummary ? (
-                  <div className="grid gap-3 md:grid-cols-5">
+                  <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
                     <SummaryPill
                       label="Carryover in"
                       value={formatMoney(selectedSummary.carryoverInCents)}
+                    />
+                    <SummaryPill
+                      label="Profit"
+                      value={formatMoney(selectedSummary.profitCents)}
                     />
                     <SummaryPill
                       label="Taxes"
@@ -410,6 +498,14 @@ export function PeriodsPage() {
 
                 <div className="flex flex-wrap justify-end gap-2">
                   {hasUnsavedChanges ? <Badge variant="warning">Unsaved</Badge> : null}
+                  <Button
+                    onClick={() => setAuditModalOpen(true)}
+                    type="button"
+                    variant="outline"
+                  >
+                    <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+                    Audit
+                  </Button>
                   <Button
                     disabled={!hasUnsavedChanges}
                     onClick={() => setDraftPeriod(structuredClone(selectedPeriod))}
@@ -454,6 +550,16 @@ export function PeriodsPage() {
                   );
                 })
               }
+              onUpdate={(itemId, updater) =>
+                updateDraftPeriod((period) => {
+                  const item = period.grossIncomeItems.find(
+                    (candidate) => candidate.id === itemId
+                  );
+                  if (item) {
+                    updater(item);
+                  }
+                })
+              }
               title="Gross Income"
             />
 
@@ -469,6 +575,16 @@ export function PeriodsPage() {
                   period.extraExpenseItems = period.extraExpenseItems.filter(
                     (item) => item.id !== itemId
                   );
+                })
+              }
+              onUpdate={(itemId, updater) =>
+                updateDraftPeriod((period) => {
+                  const item = period.extraExpenseItems.find(
+                    (candidate) => candidate.id === itemId
+                  );
+                  if (item) {
+                    updater(item);
+                  }
                 })
               }
               title="Extra Expenses"
@@ -494,6 +610,25 @@ export function PeriodsPage() {
           </div>
         ) : null}
       </div>
+
+      {auditModalOpen && draftPeriod ? (
+        <PeriodAuditModal
+          hasUnsavedChanges={hasUnsavedChanges}
+          period={draftPeriod}
+          summary={selectedSummary}
+          today={today}
+          onChange={(audit) =>
+            updateDraftPeriod((period) => {
+              period.audit = audit;
+            })
+          }
+          onClose={() => setAuditModalOpen(false)}
+          onSave={() => {
+            savePeriod();
+            setAuditModalOpen(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -532,15 +667,384 @@ function SummaryPill({ label, value }: { label: string; value: string }) {
   );
 }
 
+function PeriodStatusBadges({
+  period,
+  today
+}: {
+  period: FinancialPeriod;
+  today: string;
+}) {
+  const current = isPeriodCurrent(period, today);
+  const past = isPeriodPast(period, today);
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {current ? <Badge variant="success">Current</Badge> : null}
+      {period.audit?.completedAt ? (
+        <Badge variant="success">Audited</Badge>
+      ) : past ? (
+        <Badge variant="warning">Audit ready</Badge>
+      ) : current ? (
+        <Badge variant="muted">In progress</Badge>
+      ) : (
+        <Badge variant="muted">Upcoming</Badge>
+      )}
+    </div>
+  );
+}
+
+function PeriodAuditModal({
+  hasUnsavedChanges,
+  onChange,
+  onClose,
+  onSave,
+  period,
+  summary,
+  today
+}: {
+  hasUnsavedChanges: boolean;
+  onChange: (audit: PeriodAudit | undefined) => void;
+  onClose: () => void;
+  onSave: () => void;
+  period: FinancialPeriod;
+  summary: PeriodSummary | undefined;
+  today: string;
+}) {
+  const audit = period.audit ?? createDefaultPeriodAudit(summary);
+  const hasAudit = Boolean(period.audit);
+  const actualProfitCents = calculateAuditProfitCents(audit);
+  const plannedOutflowCents =
+    (summary?.taxCents ?? 0) +
+    (summary?.costOfLivingCents ?? 0) +
+    (summary?.extraExpenseCents ?? 0) +
+    (summary?.charityCents ?? 0);
+  const actualOutflowCents =
+    audit.actualTaxCents +
+    audit.actualCostOfLivingCents +
+    audit.actualExtraExpenseCents +
+    audit.actualCharityCents;
+  const auditRows = [
+    {
+      label: "Gross income",
+      plannedCents: summary?.grossIncomeCents ?? 0,
+      actualCents: audit.actualGrossIncomeCents
+    },
+    {
+      label: "Taxes",
+      plannedCents: summary?.taxCents ?? 0,
+      actualCents: audit.actualTaxCents
+    },
+    {
+      label: "Cost of living",
+      plannedCents: summary?.costOfLivingCents ?? 0,
+      actualCents: audit.actualCostOfLivingCents
+    },
+    {
+      label: "Extra expenses",
+      plannedCents: summary?.extraExpenseCents ?? 0,
+      actualCents: audit.actualExtraExpenseCents
+    },
+    {
+      label: "Charity",
+      plannedCents: summary?.charityCents ?? 0,
+      actualCents: audit.actualCharityCents
+    },
+    {
+      label: "Savings",
+      plannedCents: summary?.plannedSavingsCents ?? 0,
+      actualCents: audit.actualSavingsCents
+    },
+    {
+      label: "Profit",
+      plannedCents: summary?.profitCents ?? 0,
+      actualCents: actualProfitCents
+    }
+  ];
+
+  const patchAudit = (updates: Partial<PeriodAudit>) => {
+    onChange({
+      ...audit,
+      ...updates
+    });
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+    >
+      <div
+        className={cn(
+          "flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-md border border-border bg-card text-card-foreground shadow-soft",
+          isPeriodPast(period, today) &&
+            !period.audit?.completedAt &&
+            "border-amber-200"
+        )}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border p-5">
+          <div>
+            <CardTitle>Post-period Audit</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {period.name} · {period.startDate} to {period.endDate}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <PeriodStatusBadges period={period} today={today} />
+            <Button
+              aria-label="Close audit"
+              onClick={onClose}
+              size="icon"
+              type="button"
+              variant="ghost"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
+
+        <div className="space-y-5 overflow-y-auto p-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryPill
+            label="Actual profit"
+            value={formatMoney(actualProfitCents)}
+          />
+          <SummaryPill
+            label="Profit delta"
+            value={formatSignedMoney(
+              actualProfitCents - (summary?.profitCents ?? 0)
+            )}
+          />
+          <SummaryPill
+            label="Expense variance"
+            value={formatSignedMoney(actualOutflowCents - plannedOutflowCents)}
+          />
+          <SummaryPill
+            label="Savings follow-through"
+            value={formatRatioPercent(
+              audit.actualSavingsCents,
+              summary?.plannedSavingsCents ?? 0
+            )}
+          />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <AuditMoneyField
+            label="Actual gross income"
+            valueCents={audit.actualGrossIncomeCents}
+            onChange={(value) =>
+              patchAudit({ actualGrossIncomeCents: Math.max(value, 0) })
+            }
+          />
+          <AuditMoneyField
+            label="Actual taxes"
+            valueCents={audit.actualTaxCents}
+            onChange={(value) =>
+              patchAudit({ actualTaxCents: Math.max(value, 0) })
+            }
+          />
+          <AuditMoneyField
+            label="Actual cost of living"
+            valueCents={audit.actualCostOfLivingCents}
+            onChange={(value) =>
+              patchAudit({ actualCostOfLivingCents: Math.max(value, 0) })
+            }
+          />
+          <AuditMoneyField
+            label="Actual extra expenses"
+            valueCents={audit.actualExtraExpenseCents}
+            onChange={(value) =>
+              patchAudit({ actualExtraExpenseCents: Math.max(value, 0) })
+            }
+          />
+          <AuditMoneyField
+            label="Actual charity"
+            valueCents={audit.actualCharityCents}
+            onChange={(value) =>
+              patchAudit({ actualCharityCents: Math.max(value, 0) })
+            }
+          />
+          <AuditMoneyField
+            label="Actual savings"
+            valueCents={audit.actualSavingsCents}
+            onChange={(value) =>
+              patchAudit({ actualSavingsCents: Math.max(value, 0) })
+            }
+          />
+        </div>
+
+        <Field label="Audit notes">
+          <Textarea
+            value={audit.notes ?? ""}
+            onChange={(event) => patchAudit({ notes: event.target.value })}
+          />
+        </Field>
+
+        <div className="overflow-hidden rounded-md border border-border">
+          <table className="w-full min-w-[720px] text-sm">
+            <thead className="bg-muted text-left text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Metric</th>
+                <th className="px-3 py-2 font-medium">Planned</th>
+                <th className="px-3 py-2 font-medium">Actual</th>
+                <th className="px-3 py-2 font-medium">Delta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditRows.map((row) => (
+                <tr className="border-t border-border" key={row.label}>
+                  <td className="px-3 py-2 font-medium">{row.label}</td>
+                  <td className="px-3 py-2">
+                    {formatMoney(row.plannedCents)}
+                  </td>
+                  <td className="px-3 py-2">{formatMoney(row.actualCents)}</td>
+                  <td className="px-3 py-2">
+                    {formatSignedMoney(row.actualCents - row.plannedCents)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            {audit.completedAt
+              ? `Audited ${audit.completedAt.slice(0, 10)}`
+              : hasAudit
+                ? "Audit draft"
+                : "No saved audit"}
+          </p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              onClick={() => onChange(createDefaultPeriodAudit(summary))}
+              type="button"
+              variant="outline"
+            >
+              Prefill from plan
+            </Button>
+            <Button
+              onClick={() =>
+                onChange({
+                  ...audit,
+                  completedAt: new Date().toISOString()
+                })
+              }
+              type="button"
+            >
+              Mark audited
+            </Button>
+            <Button
+              disabled={!hasAudit}
+              onClick={() => onChange(undefined)}
+              type="button"
+              variant="destructive"
+            >
+              Clear audit
+            </Button>
+          </div>
+        </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border p-5">
+          {hasUnsavedChanges ? <Badge variant="warning">Unsaved</Badge> : null}
+          <Button onClick={onClose} type="button" variant="outline">
+            Close
+          </Button>
+          <Button
+            disabled={!hasUnsavedChanges}
+            onClick={onSave}
+            type="button"
+          >
+            <Save className="h-4 w-4" aria-hidden="true" />
+            Save audit
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuditMoneyField({
+  label,
+  onChange,
+  valueCents
+}: {
+  label: string;
+  onChange: (valueCents: number) => void;
+  valueCents: number;
+}) {
+  return (
+    <Field label={label}>
+      <MoneyInput valueCents={valueCents} onChange={onChange} />
+    </Field>
+  );
+}
+
+function createDefaultPeriodAudit(
+  summary: PeriodSummary | undefined
+): PeriodAudit {
+  return {
+    actualGrossIncomeCents: summary?.grossIncomeCents ?? 0,
+    actualTaxCents: summary?.taxCents ?? 0,
+    actualCostOfLivingCents: summary?.costOfLivingCents ?? 0,
+    actualExtraExpenseCents: summary?.extraExpenseCents ?? 0,
+    actualCharityCents: summary?.charityCents ?? 0,
+    actualSavingsCents: summary?.plannedSavingsCents ?? 0,
+    notes: ""
+  };
+}
+
+function calculateAuditProfitCents(audit: PeriodAudit): number {
+  return (
+    audit.actualGrossIncomeCents -
+    audit.actualTaxCents -
+    audit.actualCostOfLivingCents -
+    audit.actualExtraExpenseCents -
+    audit.actualCharityCents
+  );
+}
+
+function formatSignedMoney(cents: number): string {
+  const normalizedCents = Object.is(cents, -0) ? 0 : cents;
+  return normalizedCents > 0
+    ? `+${formatMoney(normalizedCents)}`
+    : formatMoney(normalizedCents);
+}
+
+function formatRatioPercent(actualCents: number, plannedCents: number): string {
+  if (plannedCents === 0) {
+    return actualCents === 0 ? "100%" : "n/a";
+  }
+
+  return formatPercent((actualCents / plannedCents) * 100);
+}
+
 function PeriodItemSection({
   items,
   onAdd,
   onDelete,
+  onUpdate,
   title
 }: {
   items: RecurringMoneyItem[];
   onAdd: (item: RecurringMoneyItem) => void;
   onDelete: (itemId: string) => void;
+  onUpdate: (
+    itemId: string,
+    updater: (item: RecurringMoneyItem) => void
+  ) => void;
   title: string;
 }) {
   const { handleSubmit, register, reset, watch } = useForm<PeriodItemForm>({
@@ -565,7 +1069,8 @@ function PeriodItemSection({
       category: values.category.trim() || "Other",
       amountCents,
       cadence: values.cadence,
-      date: values.cadence === "oneTime" ? values.date : undefined
+      date: values.cadence === "oneTime" ? values.date : undefined,
+      enabled: true
     });
     reset({
       name: "",
@@ -622,10 +1127,11 @@ function PeriodItemSection({
           </div>
         </form>
 
-        <div className="overflow-hidden rounded-md border border-border">
-          <table className="w-full min-w-[620px] text-sm">
+        <div className="overflow-x-auto rounded-md border border-border">
+          <table className="w-full min-w-[980px] text-sm">
             <thead className="bg-muted text-left text-muted-foreground">
               <tr>
+                <th className="w-24 px-3 py-2 font-medium">Included</th>
                 <th className="px-3 py-2 font-medium">Item</th>
                 <th className="px-3 py-2 font-medium">Category</th>
                 <th className="px-3 py-2 font-medium">Amount</th>
@@ -635,28 +1141,116 @@ function PeriodItemSection({
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
-                <tr className="border-t border-border" key={item.id}>
-                  <td className="px-3 py-2 font-medium">{item.name}</td>
-                  <td className="px-3 py-2">{item.category}</td>
-                  <td className="px-3 py-2">{formatMoney(item.amountCents)}</td>
-                  <td className="px-3 py-2 capitalize">
-                    {item.cadence === "oneTime" ? "One-time" : item.cadence}
-                  </td>
-                  <td className="px-3 py-2">{item.date ?? "-"}</td>
-                  <td className="px-3 py-2 text-right">
-                    <Button
-                      aria-label={`Delete ${item.name}`}
-                      onClick={() => onDelete(item.id)}
-                      size="icon"
-                      type="button"
-                      variant="ghost"
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    </Button>
-                  </td>
-                </tr>
-              ))}
+              {items.map((item) => {
+                const enabled = item.enabled !== false;
+
+                return (
+                  <tr
+                    className={cn(
+                      "border-t border-border",
+                      !enabled && "bg-muted/30 text-muted-foreground"
+                    )}
+                    key={item.id}
+                  >
+                    <td className="px-3 py-2">
+                      <input
+                        aria-label={`${item.name} included in totals`}
+                        checked={enabled}
+                        className="h-4 w-4 rounded border-input accent-primary"
+                        onChange={(event) =>
+                          onUpdate(item.id, (draftItem) => {
+                            draftItem.enabled = event.target.checked;
+                          })
+                        }
+                        type="checkbox"
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Input
+                        aria-label={`Name for ${item.name}`}
+                        className="min-w-40"
+                        value={item.name}
+                        onChange={(event) =>
+                          onUpdate(item.id, (draftItem) => {
+                            draftItem.name = event.target.value;
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Input
+                        aria-label={`Category for ${item.name}`}
+                        className="min-w-36"
+                        value={item.category}
+                        onChange={(event) =>
+                          onUpdate(item.id, (draftItem) => {
+                            draftItem.category = event.target.value;
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <MoneyInput
+                        aria-label={`Amount for ${item.name}`}
+                        className="min-w-28"
+                        valueCents={item.amountCents}
+                        onChange={(value) =>
+                          onUpdate(item.id, (draftItem) => {
+                            draftItem.amountCents = Math.max(value, 0);
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Select
+                        aria-label={`Cadence for ${item.name}`}
+                        className="min-w-32"
+                        value={item.cadence}
+                        onChange={(event) =>
+                          onUpdate(item.id, (draftItem) => {
+                            const nextCadence = event.target.value as Cadence;
+                            draftItem.cadence = nextCadence;
+                            draftItem.date =
+                              nextCadence === "oneTime"
+                                ? draftItem.date ?? format(new Date(), "yyyy-MM-dd")
+                                : undefined;
+                          })
+                        }
+                      >
+                        <option value="monthly">Monthly</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="yearly">Yearly</option>
+                        <option value="oneTime">One-time</option>
+                      </Select>
+                    </td>
+                    <td className="px-3 py-2">
+                      <Input
+                        aria-label={`Date for ${item.name}`}
+                        className="min-w-36"
+                        disabled={item.cadence !== "oneTime"}
+                        type="date"
+                        value={item.date ?? ""}
+                        onChange={(event) =>
+                          onUpdate(item.id, (draftItem) => {
+                            draftItem.date = event.target.value;
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <Button
+                        aria-label={`Delete ${item.name}`}
+                        onClick={() => onDelete(item.id)}
+                        size="icon"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

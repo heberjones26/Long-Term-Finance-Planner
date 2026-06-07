@@ -1,6 +1,7 @@
 import { Copy, Plus, Save, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
+import { MoneyInput } from "../components/MoneyInput";
 import { PageHeader } from "../components/PageHeader";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -9,7 +10,7 @@ import { Field, Input, Select, Textarea } from "../components/ui/field";
 import { createId } from "../domain/ids";
 import { dollarsToCents, formatMoney } from "../domain/money";
 import { normalizedMonthlyCents } from "../domain/projection";
-import type { CostOfLivingScenario } from "../domain/types";
+import type { CostItem, CostOfLivingScenario } from "../domain/types";
 import { isSameDraft } from "../lib/draft";
 import { cn } from "../lib/utils";
 import { usePlannerStore } from "../store/plannerStore";
@@ -79,6 +80,18 @@ export function CostOfLivingPage() {
       const next = structuredClone(current);
       updater(next);
       return next;
+    });
+  };
+
+  const updateCostItem = (
+    itemId: string,
+    updater: (item: CostItem) => void
+  ) => {
+    updateDraftScenario((scenario) => {
+      const item = scenario.items.find((candidate) => candidate.id === itemId);
+      if (item) {
+        updater(item);
+      }
     });
   };
 
@@ -160,7 +173,8 @@ export function CostOfLivingPage() {
         name: values.name.trim(),
         category: values.category.trim() || "Uncategorized",
         amountCents,
-        cadence: values.cadence
+        cadence: values.cadence,
+        enabled: true
       });
     });
     reset({
@@ -317,10 +331,11 @@ export function CostOfLivingPage() {
                 </div>
               </form>
 
-              <div className="overflow-hidden rounded-md border border-border">
-                <table className="w-full min-w-[660px] text-sm">
+              <div className="overflow-x-auto rounded-md border border-border">
+                <table className="w-full min-w-[940px] text-sm">
                   <thead className="bg-muted text-left text-muted-foreground">
                     <tr>
+                      <th className="w-24 px-3 py-2 font-medium">Included</th>
                       <th className="px-3 py-2 font-medium">Item</th>
                       <th className="px-3 py-2 font-medium">Category</th>
                       <th className="px-3 py-2 font-medium">Cadence</th>
@@ -330,38 +345,109 @@ export function CostOfLivingPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {draftScenario.items.map((item) => (
-                      <tr className="border-t border-border" key={item.id}>
-                        <td className="px-3 py-2 font-medium">{item.name}</td>
-                        <td className="px-3 py-2">{item.category}</td>
-                        <td className="px-3 py-2 capitalize">{item.cadence}</td>
-                        <td className="px-3 py-2">
-                          {formatMoney(item.amountCents)}
-                        </td>
-                        <td className="px-3 py-2">
-                          {formatMoney(
-                            normalizedMonthlyCents(item.amountCents, item.cadence)
+                    {draftScenario.items.map((item) => {
+                      const enabled = item.enabled !== false;
+                      const normalizedCents = normalizedMonthlyCents(
+                        item.amountCents,
+                        item.cadence
+                      );
+
+                      return (
+                        <tr
+                          className={cn(
+                            "border-t border-border",
+                            !enabled && "bg-muted/30 text-muted-foreground"
                           )}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <Button
-                            aria-label={`Delete ${item.name}`}
-                            onClick={() =>
-                              updateDraftScenario((scenario) => {
-                                scenario.items = scenario.items.filter(
-                                  (candidate) => candidate.id !== item.id
-                                );
-                              })
-                            }
-                            size="icon"
-                            type="button"
-                            variant="ghost"
-                          >
-                            <Trash2 className="h-4 w-4" aria-hidden="true" />
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
+                          key={item.id}
+                        >
+                          <td className="px-3 py-2">
+                            <input
+                              aria-label={`${item.name} included in totals`}
+                              checked={enabled}
+                              className="h-4 w-4 rounded border-input accent-primary"
+                              onChange={(event) =>
+                                updateCostItem(item.id, (draftItem) => {
+                                  draftItem.enabled = event.target.checked;
+                                })
+                              }
+                              type="checkbox"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <Input
+                              aria-label={`Name for ${item.name}`}
+                              className="min-w-40"
+                              value={item.name}
+                              onChange={(event) =>
+                                updateCostItem(item.id, (draftItem) => {
+                                  draftItem.name = event.target.value;
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <Input
+                              aria-label={`Category for ${item.name}`}
+                              className="min-w-36"
+                              value={item.category}
+                              onChange={(event) =>
+                                updateCostItem(item.id, (draftItem) => {
+                                  draftItem.category = event.target.value;
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <Select
+                              aria-label={`Cadence for ${item.name}`}
+                              className="min-w-28"
+                              value={item.cadence}
+                              onChange={(event) =>
+                                updateCostItem(item.id, (draftItem) => {
+                                  draftItem.cadence = event.target
+                                    .value as CostItem["cadence"];
+                                })
+                              }
+                            >
+                              <option value="monthly">Monthly</option>
+                              <option value="yearly">Yearly</option>
+                            </Select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <MoneyInput
+                              aria-label={`Amount for ${item.name}`}
+                              className="min-w-28"
+                              valueCents={item.amountCents}
+                              onChange={(value) =>
+                                updateCostItem(item.id, (draftItem) => {
+                                  draftItem.amountCents = Math.max(value, 0);
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="px-3 py-2 font-medium">
+                            {formatMoney(enabled ? normalizedCents : 0)}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <Button
+                              aria-label={`Delete ${item.name}`}
+                              onClick={() =>
+                                updateDraftScenario((scenario) => {
+                                  scenario.items = scenario.items.filter(
+                                    (candidate) => candidate.id !== item.id
+                                  );
+                                })
+                              }
+                              size="icon"
+                              type="button"
+                              variant="ghost"
+                            >
+                              <Trash2 className="h-4 w-4" aria-hidden="true" />
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -395,6 +481,9 @@ function getCategoryTotals(scenario: CostOfLivingScenario | null | undefined) {
   }
   const totals = new Map<string, number>();
   scenario.items.forEach((item) => {
+    if (item.enabled === false) {
+      return;
+    }
     const monthlyCents = normalizedMonthlyCents(item.amountCents, item.cadence);
     totals.set(item.category, (totals.get(item.category) ?? 0) + monthlyCents);
   });
