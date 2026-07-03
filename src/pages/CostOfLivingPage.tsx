@@ -306,7 +306,7 @@ export function CostOfLivingPage() {
             </CardHeader>
             <CardContent className="space-y-5">
               <form
-                className="grid gap-3 md:grid-cols-[1fr_1fr_140px_140px_auto]"
+                className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[1fr_1fr_140px_140px_auto]"
                 onSubmit={onAddItem}
               >
                 <Field label="Name">
