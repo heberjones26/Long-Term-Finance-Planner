@@ -470,7 +470,7 @@ export function PeriodsPage() {
                 </div>
 
                 {selectedSummary ? (
-                  <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <SummaryPill
                       label="Carryover in"
                       value={formatMoney(selectedSummary.carryoverInCents)}
@@ -1110,43 +1110,44 @@ function PeriodItemSection({
         <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
-        <form
-          className="grid gap-3 md:grid-cols-[1fr_1fr_140px_150px_150px_auto]"
-          onSubmit={submit}
-        >
-          <Field label="Name">
-            <Input placeholder={title === "Gross Income" ? "Job" : "Books"} {...register("name")} />
-          </Field>
-          <Field label="Category">
-            <Input placeholder="Category" {...register("category")} />
-          </Field>
-          <Field label="Amount">
-            <Input
-              inputMode="decimal"
-              type="text"
-              {...register("amount")}
-            />
-          </Field>
-          <Field label="Cadence">
-            <Select {...register("cadence")}>
-              <option value="monthly">Monthly</option>
-              <option value="weekly">Weekly</option>
-              <option value="yearly">Yearly</option>
-              <option value="oneTime">One-time</option>
-            </Select>
-          </Field>
-          <Field label="Date">
-            <Input
-              disabled={cadence !== "oneTime"}
-              type="date"
-              {...register("date")}
-            />
-          </Field>
-          <div className="flex items-end">
-            <Button className="w-full" type="submit">
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              Add
-            </Button>
+        <form className="space-y-3" onSubmit={submit}>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Name">
+              <Input placeholder={title === "Gross Income" ? "Job" : "Books"} {...register("name")} />
+            </Field>
+            <Field label="Category">
+              <Input placeholder="Category" {...register("category")} />
+            </Field>
+            <Field label="Amount">
+              <Input
+                inputMode="decimal"
+                type="text"
+                {...register("amount")}
+              />
+            </Field>
+            <Field label="Cadence">
+              <Select {...register("cadence")}>
+                <option value="monthly">Monthly</option>
+                <option value="weekly">Weekly</option>
+                <option value="yearly">Yearly</option>
+                <option value="oneTime">One-time</option>
+              </Select>
+            </Field>
+          </div>
+          <div className="grid gap-3 grid-cols-[minmax(160px,240px)_auto]">
+            <Field label="Date">
+              <Input
+                disabled={cadence !== "oneTime"}
+                type="date"
+                {...register("date")}
+              />
+            </Field>
+            <div className="flex items-end">
+              <Button type="submit">
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add
+              </Button>
+            </div>
           </div>
         </form>
 

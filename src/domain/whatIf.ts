@@ -23,9 +23,16 @@ export type WhatIfPeriodItemOverride = {
   amountCents: MoneyCents;
 };
 
+export type WhatIfPeriodSavingsRateOverride = {
+  id: Id;
+  periodId: Id;
+  savingsRate: number;
+};
+
 export type WhatIfInputs = {
   costOfLivingItemOverrides: WhatIfCostOfLivingItemOverride[];
   periodItemOverrides: WhatIfPeriodItemOverride[];
+  periodSavingsRateOverrides: WhatIfPeriodSavingsRateOverride[];
   selectedGoalId?: string;
   selectedScenarioId?: string;
 };
@@ -49,7 +56,8 @@ export type WhatIfComparison = {
 
 export const defaultWhatIfInputs: WhatIfInputs = {
   costOfLivingItemOverrides: [],
-  periodItemOverrides: []
+  periodItemOverrides: [],
+  periodSavingsRateOverrides: []
 };
 
 export function applyWhatIfInputs(
@@ -79,6 +87,15 @@ export function applyWhatIfInputs(
     const periodItem = items?.find((item) => item.id === override.itemId);
     if (periodItem) {
       periodItem.amountCents = clampMoney(override.amountCents);
+    }
+  }
+
+  for (const override of inputs.periodSavingsRateOverrides ?? []) {
+    const period = nextPlan.periods.find(
+      (item) => item.id === override.periodId
+    );
+    if (period) {
+      period.savingsRate = clampRate(override.savingsRate);
     }
   }
 
@@ -156,4 +173,11 @@ function clampMoney(value: number): MoneyCents {
     return 0;
   }
   return Math.max(Math.round(value), 0);
+}
+
+function clampRate(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(Math.max(value, 0), 100);
 }

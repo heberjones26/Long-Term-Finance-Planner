@@ -165,6 +165,46 @@ describe("what-if helpers", () => {
     expect(result.periods[1].extraExpenseItems[0].amountCents).toBe(75000);
   });
 
+  it("applies a savings rate override to the matching period only", () => {
+    const plan = basePlan();
+    const result = applyWhatIfInputs(plan, {
+      ...defaultWhatIfInputs,
+      periodSavingsRateOverrides: [
+        {
+          id: "rate-override",
+          periodId: "period-1",
+          savingsRate: 50
+        }
+      ]
+    });
+
+    expect(plan.periods[0].savingsRate).toBe(20);
+    expect(result.periods[0].savingsRate).toBe(50);
+    expect(result.periods[1].savingsRate).toBe(95);
+  });
+
+  it("clamps savings rate overrides to the 0-100 range and ignores unknown periods", () => {
+    const plan = basePlan();
+    const result = applyWhatIfInputs(plan, {
+      ...defaultWhatIfInputs,
+      periodSavingsRateOverrides: [
+        {
+          id: "too-high",
+          periodId: "period-1",
+          savingsRate: 150
+        },
+        {
+          id: "missing-period",
+          periodId: "missing",
+          savingsRate: 10
+        }
+      ]
+    });
+
+    expect(result.periods[0].savingsRate).toBe(100);
+    expect(result.periods[1].savingsRate).toBe(95);
+  });
+
   it("ignores item overrides that do not match the plan", () => {
     const plan = basePlan();
     const result = applyWhatIfInputs(plan, {

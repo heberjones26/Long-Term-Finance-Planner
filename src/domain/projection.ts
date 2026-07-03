@@ -77,6 +77,8 @@ export function projectPlan(
   warnings.push(...validateScenarioReferences(periods, colScenarios));
 
   const months = buildProjectionMonths(plan, periods, options);
+  const monthKeys = months.map((monthDate) => format(monthDate, "yyyy-MM"));
+  const executionEffects = buildGoalExecutionEffects(plan, monthKeys);
   const reservedGoalContributionCents = sumGoalContributions(plan.goals);
   let spendableBalance = plan.startingSpendableCents;
   let savingsBalance = plan.startingSavingsCents;
@@ -130,6 +132,17 @@ export function projectPlan(
       }
     }
 
+    const executionEffect = executionEffects.get(monthKey);
+    let goalSpendCents = 0;
+    let goalEventLabels: string[] = [];
+    if (executionEffect) {
+      savingsBalance -= executionEffect.savingsDrawCents;
+      spendableBalance -= executionEffect.spendableDrawCents;
+      goalSpendCents =
+        executionEffect.savingsDrawCents + executionEffect.spendableDrawCents;
+      goalEventLabels = executionEffect.labels;
+    }
+
     cumulativeTaxCents += monthContribution.taxCents;
     const row: ProjectionMonth = {
       month: monthKey,
@@ -137,6 +150,8 @@ export function projectPlan(
       openingSpendableCents,
       openingSavingsCents,
       ...monthContribution,
+      goalSpendCents,
+      goalEventLabels,
       closingSpendableCents: spendableBalance,
       closingSavingsCents: savingsBalance,
       cumulativeTaxCents,
@@ -154,10 +169,15 @@ export function projectPlan(
     projectedMonths.push(row);
   }
 
+  const executedScenarioKeys = new Set(
+    (plan.executions ?? []).map(
+      (execution) => `${execution.goalId}:${execution.scenarioId}`
+    )
+  );
   const goalResults = calculateGoalResults(
     plan.goals,
     projectedMonths,
-    reservedGoalContributionCents
+    executedScenarioKeys
   );
   for (const result of goalResults) {
     if (result.surplusOrShortfallCents < 0) {
@@ -328,6 +348,22 @@ export function getGoalScenarioType(scenario: GoalScenario): GoalType {
   return scenario.type ?? (scenario.house ? "house" : "other");
 }
 
+/**
+ * Cash that actually leaves your accounts to execute a goal. For a house this is
+ * the down payment plus closing costs; for any other goal it is the goal amount.
+ */
+export function goalExecutionUpfrontCents(scenario: GoalScenario): MoneyCents {
+  if (getGoalScenarioType(scenario) === "house" && scenario.house) {
+    return Math.round(
+      scenario.house.purchasePriceCents *
+        ((scenario.house.downPaymentPercent +
+          scenario.house.closingCostPercent) /
+          100)
+    );
+  }
+  return scenario.targetAmountCents;
+}
+
 function calculatePeriodMonthContribution(
   period: FinancialPeriod,
   scenario: CostOfLivingScenario | undefined,
@@ -451,7 +487,7 @@ function calculateProfitCents(contribution: Contribution): MoneyCents {
 function calculateGoalResults(
   goals: Goal[],
   months: ProjectionMonth[],
-  reservedGoalContributionCents: MoneyCents
+  executedScenarioKeys: Set<string>
 ): GoalResult[] {
   return goals.flatMap((goal) =>
     goal.scenarios.map((scenario) => {
@@ -461,15 +497,14 @@ function calculateGoalResults(
       const targetMonth = scenario.targetDate.slice(0, 7);
       const row =
         months.find((month) => month.month === targetMonth) ?? months.at(-1);
-      const contributedFromSavingsCents =
-        goal.contributedFromSavingsCents ?? 0;
       const closingSpendableCents = row?.closingSpendableCents ?? 0;
-      const closingSavingsCents = row?.closingSavingsCents ?? 0;
-      const unallocatedAvailableCashCents =
-        closingSpendableCents +
-        Math.max(closingSavingsCents - reservedGoalContributionCents, 0);
+      // A goal is funded by spendable cash plus the savings it has earmarked
+      // ("contributed from savings"). Uncommitted savings stays as a buffer and
+      // does not count toward the goal.
+      const contributedFromSavingsCents = goal.contributedFromSavingsCents ?? 0;
+      const unallocatedAvailableCashCents = closingSpendableCents;
       const availableCashCents =
-        unallocatedAvailableCashCents + contributedFromSavingsCents;
+        closingSpendableCents + contributedFromSavingsCents;
       const requiredCashCents = requiredCashForGoalScenario(scenario);
       const surplusOrShortfallCents = availableCashCents - requiredCashCents;
       const houseCash = houseFields
@@ -495,7 +530,9 @@ function calculateGoalResults(
         ...houseCash,
         estimatedMonthlyPaymentCents: houseFields
           ? estimateHousePaymentCents(houseFields)
-          : undefined
+          : undefined,
+        executed: executedScenarioKeys.has(`${goal.id}:${scenario.id}`),
+        executionUpfrontCents: goalExecutionUpfrontCents(scenario)
       };
     })
   );
@@ -532,6 +569,71 @@ function calculateHouseCashAvailability(
     requiredClosingCostCents,
     requiredDownPaymentCents
   };
+}
+
+type GoalExecutionEffect = {
+  /** Earmarked savings ("contributed from savings") spent at the target month. */
+  savingsDrawCents: MoneyCents;
+  /** Remaining upfront cost drawn from spendable cash at the target month. */
+  spendableDrawCents: MoneyCents;
+  labels: string[];
+};
+
+function buildGoalExecutionEffects(
+  plan: PlanDocument,
+  monthKeys: string[]
+): Map<string, GoalExecutionEffect> {
+  const effects = new Map<string, GoalExecutionEffect>();
+  const executions = plan.executions ?? [];
+  if (executions.length === 0) {
+    return effects;
+  }
+
+  const ensure = (monthKey: string): GoalExecutionEffect => {
+    let effect = effects.get(monthKey);
+    if (!effect) {
+      effect = {
+        savingsDrawCents: 0,
+        spendableDrawCents: 0,
+        labels: []
+      };
+      effects.set(monthKey, effect);
+    }
+    return effect;
+  };
+
+  for (const execution of executions) {
+    const goal = plan.goals.find((item) => item.id === execution.goalId);
+    const scenario = goal?.scenarios.find(
+      (item) => item.id === execution.scenarioId
+    );
+    if (!goal || !scenario) {
+      continue;
+    }
+
+    const targetMonth = scenario.targetDate.slice(0, 7);
+    const targetIndex = monthKeys.indexOf(targetMonth);
+    if (targetIndex < 0) {
+      continue;
+    }
+
+    // Fund the goal from its earmarked savings contribution first, then cover
+    // the remainder from spendable cash. Any savings beyond the contribution is
+    // left untouched as an emergency buffer.
+    const upfrontCents = goalExecutionUpfrontCents(scenario);
+    const savingsDrawCents = Math.min(
+      goal.contributedFromSavingsCents ?? 0,
+      upfrontCents
+    );
+    const target = ensure(targetMonth);
+    target.savingsDrawCents += savingsDrawCents;
+    target.spendableDrawCents += upfrontCents - savingsDrawCents;
+    target.labels.push(`Bought ${goal.name} (${scenario.name})`);
+    // The ongoing mortgage payment is intentionally not applied here; recurring
+    // housing costs are expected to live in the period cost-of-living instead.
+  }
+
+  return effects;
 }
 
 function sumGoalContributions(goals: Goal[]): MoneyCents {

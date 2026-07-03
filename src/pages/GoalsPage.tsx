@@ -468,7 +468,7 @@ export function GoalsPage() {
               </CardHeader>
               <CardContent>
                 {selectedResult ? (
-                  <div className="grid gap-4 md:grid-cols-6">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <ResultPill
                       label="Funded"
                       value={formatPercent(Math.round(selectedResult.percentFunded))}
@@ -485,7 +485,7 @@ export function GoalsPage() {
                     />
                     {selectedResult.availableDownPaymentCents !== undefined ? (
                       <ResultPill
-                        label="Down payment"
+                        label="Affordable down payment"
                         value={formatMoney(
                           selectedResult.availableDownPaymentCents
                         )}
@@ -646,7 +646,7 @@ function HouseFields({
         </Field>
       </div>
 
-      <div className="mt-5 grid gap-3 md:grid-cols-5">
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <ResultPill
           label="Loan amount"
           value={formatMoney(amortization.loanPrincipalCents)}
