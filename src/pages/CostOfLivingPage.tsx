@@ -1,7 +1,7 @@
 import { Copy, Pencil, Plus, Save, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
-import { MoneyInput } from "../components/MoneyInput";
+import { MoneyVariableField } from "../components/VariableField";
 import { PageHeader } from "../components/PageHeader";
 import { PillToggle } from "../components/PillToggle";
 import { Badge } from "../components/ui/badge";
@@ -432,9 +432,15 @@ export function CostOfLivingPage() {
                           </td>
                           <td className="px-3 py-2">
                             {isEditing ? (
-                              <MoneyInput
+                              <MoneyVariableField
                                 aria-label={`Amount for ${item.name}`}
                                 className="min-w-28"
+                                path={{
+                                  scope: "costItem",
+                                  scenarioId: draftScenario.id,
+                                  itemId: item.id
+                                }}
+                                suggestedName={item.name}
                                 valueCents={item.amountCents}
                                 onChange={(value) =>
                                   updateCostItem(item.id, (draftItem) => {

@@ -120,7 +120,8 @@ function basePlan(): PlanDocument {
           }
         ]
       }
-    ]
+    ],
+    variables: []
   };
 }
 

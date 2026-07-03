@@ -1,6 +1,6 @@
 import { Download, Eraser, RotateCcw, Save, Undo2, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
-import { MoneyInput } from "../components/MoneyInput";
+import { MoneyVariableField } from "../components/VariableField";
 import { PageHeader } from "../components/PageHeader";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -95,7 +95,9 @@ export function SettingsPage() {
             </Field>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Starting spendable cash">
-                <MoneyInput
+                <MoneyVariableField
+                  path={{ scope: "plan", field: "startingSpendableCents" }}
+                  suggestedName="Starting spendable cash"
                   valueCents={draftSettings.startingSpendableCents}
                   onChange={(value) =>
                     setDraftSettings((current) => {
@@ -108,7 +110,9 @@ export function SettingsPage() {
                 />
               </Field>
               <Field label="Starting savings">
-                <MoneyInput
+                <MoneyVariableField
+                  path={{ scope: "plan", field: "startingSavingsCents" }}
+                  suggestedName="Starting savings"
                   valueCents={draftSettings.startingSavingsCents}
                   onChange={(value) =>
                     setDraftSettings((current) => {

@@ -83,7 +83,8 @@ function basePlan(): PlanDocument {
           }
         ]
       }
-    ]
+    ],
+    variables: []
   };
 }
 

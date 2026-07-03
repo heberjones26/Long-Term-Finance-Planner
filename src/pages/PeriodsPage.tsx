@@ -20,6 +20,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { MoneyInput } from "../components/MoneyInput";
+import { MoneyVariableField, PercentVariableField } from "../components/VariableField";
 import { PageHeader } from "../components/PageHeader";
 import { PillToggle } from "../components/PillToggle";
 import { Badge } from "../components/ui/badge";
@@ -413,15 +414,18 @@ export function PeriodsPage() {
                     </Select>
                   </Field>
                   <Field label="State/local estimate">
-                    <Input
-                      max="100"
-                      min="0"
-                      step="0.1"
-                      type="number"
+                    <PercentVariableField
+                      aria-label="State/local estimate"
+                      path={{
+                        scope: "period",
+                        periodId: draftPeriod.id,
+                        field: "additionalTaxRate"
+                      }}
+                      suggestedName={`${draftPeriod.name} state/local tax`}
                       value={draftPeriod.additionalTaxRate ?? 0}
-                      onChange={(event) =>
+                      onChange={(value) =>
                         updateDraftPeriod((period) => {
-                          period.additionalTaxRate = Number(event.target.value);
+                          period.additionalTaxRate = value;
                         })
                       }
                     />
@@ -440,29 +444,35 @@ export function PeriodsPage() {
 
                 <div className="grid gap-4 md:grid-cols-2">
                   <Field label="Savings rate">
-                    <Input
-                      max="100"
-                      min="0"
-                      step="0.1"
-                      type="number"
+                    <PercentVariableField
+                      aria-label="Savings rate"
+                      path={{
+                        scope: "period",
+                        periodId: draftPeriod.id,
+                        field: "savingsRate"
+                      }}
+                      suggestedName={`${draftPeriod.name} savings rate`}
                       value={draftPeriod.savingsRate}
-                      onChange={(event) =>
+                      onChange={(value) =>
                         updateDraftPeriod((period) => {
-                          period.savingsRate = Number(event.target.value);
+                          period.savingsRate = value;
                         })
                       }
                     />
                   </Field>
                   <Field label="Charity rate">
-                    <Input
-                      max="100"
-                      min="0"
-                      step="0.1"
-                      type="number"
+                    <PercentVariableField
+                      aria-label="Charity rate"
+                      path={{
+                        scope: "period",
+                        periodId: draftPeriod.id,
+                        field: "charityRate"
+                      }}
+                      suggestedName={`${draftPeriod.name} charity rate`}
                       value={draftPeriod.charityRate}
-                      onChange={(event) =>
+                      onChange={(value) =>
                         updateDraftPeriod((period) => {
-                          period.charityRate = Number(event.target.value);
+                          period.charityRate = value;
                         })
                       }
                     />
@@ -539,7 +549,9 @@ export function PeriodsPage() {
             </Card>
 
             <PeriodItemSection
+              itemKind="grossIncome"
               items={draftPeriod.grossIncomeItems}
+              periodId={draftPeriod.id}
               onAdd={(item) =>
                 updateDraftPeriod((period) => {
                   period.grossIncomeItems.push(item);
@@ -566,7 +578,9 @@ export function PeriodsPage() {
             />
 
             <PeriodItemSection
+              itemKind="extraExpense"
               items={draftPeriod.extraExpenseItems}
+              periodId={draftPeriod.id}
               onAdd={(item) =>
                 updateDraftPeriod((period) => {
                   period.extraExpenseItems.push(item);
@@ -1048,12 +1062,15 @@ function formatRatioPercent(actualCents: number, plannedCents: number): string {
 }
 
 function PeriodItemSection({
+  itemKind,
   items,
   onAdd,
   onDelete,
   onUpdate,
+  periodId,
   title
 }: {
+  itemKind: "grossIncome" | "extraExpense";
   items: RecurringMoneyItem[];
   onAdd: (item: RecurringMoneyItem) => void;
   onDelete: (itemId: string) => void;
@@ -1061,6 +1078,7 @@ function PeriodItemSection({
     itemId: string,
     updater: (item: RecurringMoneyItem) => void
   ) => void;
+  periodId: string;
   title: string;
 }) {
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -1221,9 +1239,16 @@ function PeriodItemSection({
                     </td>
                     <td className="px-3 py-2">
                       {isEditing ? (
-                        <MoneyInput
+                        <MoneyVariableField
                           aria-label={`Amount for ${item.name}`}
                           className="min-w-28"
+                          path={{
+                            scope: "periodItem",
+                            periodId,
+                            itemKind,
+                            itemId: item.id
+                          }}
+                          suggestedName={item.name}
                           valueCents={item.amountCents}
                           onChange={(value) =>
                             onUpdate(item.id, (draftItem) => {

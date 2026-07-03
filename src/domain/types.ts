@@ -116,6 +116,51 @@ export type Goal = {
   scenarios: GoalScenario[];
 };
 
+export type VariableKind = "money" | "percent";
+
+export type VariableFieldPath =
+  | { scope: "plan"; field: "startingSpendableCents" | "startingSavingsCents" }
+  | { scope: "costItem"; scenarioId: Id; itemId: Id }
+  | {
+      scope: "periodItem";
+      periodId: Id;
+      itemKind: "grossIncome" | "extraExpense";
+      itemId: Id;
+    }
+  | {
+      scope: "period";
+      periodId: Id;
+      field: "additionalTaxRate" | "savingsRate" | "charityRate";
+    }
+  | { scope: "goal"; goalId: Id; field: "contributedFromSavingsCents" }
+  | {
+      scope: "goalScenario";
+      goalId: Id;
+      scenarioId: Id;
+      field: "targetAmountCents";
+    }
+  | {
+      scope: "houseField";
+      goalId: Id;
+      scenarioId: Id;
+      field:
+        | "purchasePriceCents"
+        | "downPaymentPercent"
+        | "closingCostPercent"
+        | "interestRatePercent"
+        | "annualPropertyTaxPercent"
+        | "monthlyInsuranceCents"
+        | "monthlyHoaCents";
+    };
+
+export type Variable = {
+  id: Id;
+  name: string;
+  kind: VariableKind;
+  value: number;
+  bindings: VariableFieldPath[];
+};
+
 export type PlanDocument = {
   id: Id;
   name: string;
@@ -125,6 +170,7 @@ export type PlanDocument = {
   costOfLivingScenarios: CostOfLivingScenario[];
   periods: FinancialPeriod[];
   goals: Goal[];
+  variables: Variable[];
   schemaVersion: number;
   createdAt: string;
   updatedAt: string;

@@ -24,7 +24,8 @@ export function createBlankPlan(): PlanDocument {
       }
     ],
     periods: [],
-    goals: []
+    goals: [],
+    variables: []
   };
 }
 
@@ -242,6 +243,7 @@ export function createSeedPlan(): PlanDocument {
           }
         ]
       }
-    ]
+    ],
+    variables: []
   };
 }

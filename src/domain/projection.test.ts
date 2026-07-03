@@ -26,7 +26,8 @@ function basePlan(): PlanDocument {
       }
     ],
     periods: [],
-    goals: []
+    goals: [],
+    variables: []
   };
 }
 

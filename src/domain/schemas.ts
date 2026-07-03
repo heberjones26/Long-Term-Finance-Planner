@@ -97,6 +97,62 @@ export const goalSchema = z.object({
   scenarios: z.array(goalScenarioSchema).min(1)
 });
 
+export const variableFieldPathSchema = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("plan"),
+    field: z.enum(["startingSpendableCents", "startingSavingsCents"])
+  }),
+  z.object({
+    scope: z.literal("costItem"),
+    scenarioId: z.string(),
+    itemId: z.string()
+  }),
+  z.object({
+    scope: z.literal("periodItem"),
+    periodId: z.string(),
+    itemKind: z.enum(["grossIncome", "extraExpense"]),
+    itemId: z.string()
+  }),
+  z.object({
+    scope: z.literal("period"),
+    periodId: z.string(),
+    field: z.enum(["additionalTaxRate", "savingsRate", "charityRate"])
+  }),
+  z.object({
+    scope: z.literal("goal"),
+    goalId: z.string(),
+    field: z.literal("contributedFromSavingsCents")
+  }),
+  z.object({
+    scope: z.literal("goalScenario"),
+    goalId: z.string(),
+    scenarioId: z.string(),
+    field: z.literal("targetAmountCents")
+  }),
+  z.object({
+    scope: z.literal("houseField"),
+    goalId: z.string(),
+    scenarioId: z.string(),
+    field: z.enum([
+      "purchasePriceCents",
+      "downPaymentPercent",
+      "closingCostPercent",
+      "interestRatePercent",
+      "annualPropertyTaxPercent",
+      "monthlyInsuranceCents",
+      "monthlyHoaCents"
+    ])
+  })
+]);
+
+export const variableSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  kind: z.enum(["money", "percent"]),
+  value: z.number(),
+  bindings: z.array(variableFieldPathSchema)
+});
+
 export const planDocumentSchema = z.object({
   id: z.string(),
   name: z.string().min(1),
@@ -106,6 +162,7 @@ export const planDocumentSchema = z.object({
   costOfLivingScenarios: z.array(costOfLivingScenarioSchema),
   periods: z.array(financialPeriodSchema),
   goals: z.array(goalSchema),
+  variables: z.array(variableSchema).default([]),
   schemaVersion: z.literal(1),
   createdAt: z.string(),
   updatedAt: z.string()

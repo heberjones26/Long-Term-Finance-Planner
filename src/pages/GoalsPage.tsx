@@ -1,6 +1,9 @@
 import { Copy, Plus, Save, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { MoneyInput } from "../components/MoneyInput";
+import {
+  MoneyVariableField,
+  PercentVariableField
+} from "../components/VariableField";
 import { PageHeader } from "../components/PageHeader";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -290,7 +293,13 @@ export function GoalsPage() {
                     </Select>
                   </Field>
                   <Field label="Contributed from savings">
-                    <MoneyInput
+                    <MoneyVariableField
+                      path={{
+                        scope: "goal",
+                        goalId: draftGoal.id,
+                        field: "contributedFromSavingsCents"
+                      }}
+                      suggestedName={`${draftGoal.name} contribution`}
                       valueCents={draftGoal.contributedFromSavingsCents ?? 0}
                       onChange={(value) =>
                         updateDraftGoal((goal) => {
@@ -423,7 +432,14 @@ export function GoalsPage() {
                         : "Goal amount"
                     }
                   >
-                    <MoneyInput
+                    <MoneyVariableField
+                      path={{
+                        scope: "goalScenario",
+                        goalId: draftGoal.id,
+                        scenarioId: selectedScenario.id,
+                        field: "targetAmountCents"
+                      }}
+                      suggestedName={`${selectedScenario.name} target`}
                       valueCents={selectedScenario.targetAmountCents}
                       onChange={(value) =>
                         updateDraftScenario(
@@ -446,6 +462,8 @@ export function GoalsPage() {
                 {selectedScenarioType === "house" ? (
                   <HouseFields
                     fields={selectedScenario.house ?? defaultHouseFields()}
+                    goalId={draftGoal.id}
+                    scenarioId={selectedScenario.id}
                     onChange={(house) =>
                       updateDraftScenario(
                         selectedScenario.id,
@@ -571,9 +589,13 @@ function CustomGoalFields({ scenario }: { scenario: GoalScenario }) {
 
 function HouseFields({
   fields,
+  goalId,
+  scenarioId,
   onChange
 }: {
   fields: HouseGoalFields;
+  goalId: string;
+  scenarioId: string;
   onChange: (fields: HouseGoalFields) => void;
 }) {
   const amortization = calculateHouseAmortization(fields);
@@ -592,25 +614,53 @@ function HouseFields({
       </div>
       <div className="grid gap-4 md:grid-cols-3">
         <Field label="Purchase price">
-          <MoneyInput
+          <MoneyVariableField
+            path={{
+              scope: "houseField",
+              goalId,
+              scenarioId,
+              field: "purchasePriceCents"
+            }}
+            suggestedName="Purchase price"
             valueCents={fields.purchasePriceCents}
             onChange={(value) => patch({ purchasePriceCents: value })}
           />
         </Field>
         <Field label="Down payment">
-          <PercentInput
+          <PercentVariableField
+            path={{
+              scope: "houseField",
+              goalId,
+              scenarioId,
+              field: "downPaymentPercent"
+            }}
+            suggestedName="Down payment %"
             value={fields.downPaymentPercent}
             onChange={(value) => patch({ downPaymentPercent: value })}
           />
         </Field>
         <Field label="Closing costs">
-          <PercentInput
+          <PercentVariableField
+            path={{
+              scope: "houseField",
+              goalId,
+              scenarioId,
+              field: "closingCostPercent"
+            }}
+            suggestedName="Closing costs %"
             value={fields.closingCostPercent}
             onChange={(value) => patch({ closingCostPercent: value })}
           />
         </Field>
         <Field label="Interest rate">
-          <PercentInput
+          <PercentVariableField
+            path={{
+              scope: "houseField",
+              goalId,
+              scenarioId,
+              field: "interestRatePercent"
+            }}
+            suggestedName="Interest rate %"
             value={fields.interestRatePercent}
             onChange={(value) => patch({ interestRatePercent: value })}
           />
@@ -627,19 +677,40 @@ function HouseFields({
           />
         </Field>
         <Field label="Property tax">
-          <PercentInput
+          <PercentVariableField
+            path={{
+              scope: "houseField",
+              goalId,
+              scenarioId,
+              field: "annualPropertyTaxPercent"
+            }}
+            suggestedName="Property tax %"
             value={fields.annualPropertyTaxPercent}
             onChange={(value) => patch({ annualPropertyTaxPercent: value })}
           />
         </Field>
         <Field label="Insurance">
-          <MoneyInput
+          <MoneyVariableField
+            path={{
+              scope: "houseField",
+              goalId,
+              scenarioId,
+              field: "monthlyInsuranceCents"
+            }}
+            suggestedName="Monthly insurance"
             valueCents={fields.monthlyInsuranceCents}
             onChange={(value) => patch({ monthlyInsuranceCents: value })}
           />
         </Field>
         <Field label="HOA">
-          <MoneyInput
+          <MoneyVariableField
+            path={{
+              scope: "houseField",
+              goalId,
+              scenarioId,
+              field: "monthlyHoaCents"
+            }}
+            suggestedName="Monthly HOA"
             valueCents={fields.monthlyHoaCents}
             onChange={(value) => patch({ monthlyHoaCents: value })}
           />
@@ -704,25 +775,6 @@ function HouseFields({
         </div>
       </div>
     </div>
-  );
-}
-
-function PercentInput({
-  onChange,
-  value
-}: {
-  onChange: (value: number) => void;
-  value: number;
-}) {
-  return (
-    <Input
-      max="100"
-      min="0"
-      step="0.1"
-      type="number"
-      value={value}
-      onChange={(event) => onChange(Number(event.target.value) || 0)}
-    />
   );
 }
 
