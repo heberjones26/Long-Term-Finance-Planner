@@ -159,11 +159,7 @@ export function analyzeRealityAdjustment(
     };
   });
   const months = projectRealityAdjustedMonths(projection.months, metrics);
-  const goalImpacts = calculateGoalImpacts(
-    projection.goalResults,
-    projection.totals.reservedGoalContributionCents,
-    months
-  );
+  const goalImpacts = calculateGoalImpacts(projection.goalResults, months);
   const biggestDrifts = [...metrics]
     .filter(
       (metric) =>
@@ -256,7 +252,6 @@ function projectRealityAdjustedMonths(
 
 function calculateGoalImpacts(
   goalResults: GoalResult[],
-  reservedGoalContributionCents: MoneyCents,
   months: RealityAdjustedMonth[]
 ): RealityGoalImpact[] {
   const monthByKey = new Map(months.map((month) => [month.month, month]));
@@ -269,15 +264,13 @@ function calculateGoalImpacts(
         (month) =>
           calculateAdjustedAvailableCash(
             month,
-            result.contributedFromSavingsCents,
-            reservedGoalContributionCents
+            result.contributedFromSavingsCents
           ) >= result.requiredCashCents
       );
       const adjustedAvailableCents = targetMonth
         ? calculateAdjustedAvailableCash(
             targetMonth,
-            result.contributedFromSavingsCents,
-            reservedGoalContributionCents
+            result.contributedFromSavingsCents
           )
         : 0;
       const adjustedTargetMonth = adjustedTarget?.month ?? null;
@@ -312,14 +305,11 @@ function calculateGoalImpacts(
 
 function calculateAdjustedAvailableCash(
   month: RealityAdjustedMonth,
-  contributedFromSavingsCents: MoneyCents,
-  reservedGoalContributionCents: MoneyCents
+  contributedFromSavingsCents: MoneyCents
 ): MoneyCents {
-  return (
-    month.adjustedSpendableCents +
-    Math.max(month.adjustedSavingsCents - reservedGoalContributionCents, 0) +
-    contributedFromSavingsCents
-  );
+  // Mirror the projection: a goal is funded by spendable cash plus the savings
+  // it has committed. Uncommitted savings stays out of the available total.
+  return month.adjustedSpendableCents + contributedFromSavingsCents;
 }
 
 function scaleCents(cents: MoneyCents, ratio: number): MoneyCents {

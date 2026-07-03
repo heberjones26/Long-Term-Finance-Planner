@@ -1,4 +1,12 @@
-import { AlertTriangle, PiggyBank, ReceiptText, Target, Wallet } from "lucide-react";
+import {
+  AlertTriangle,
+  Home,
+  PiggyBank,
+  ReceiptText,
+  RotateCcw,
+  Target,
+  Wallet
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   Area,
@@ -14,6 +22,7 @@ import {
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { formatMoney, formatPercent } from "../domain/money";
 import {
@@ -47,6 +56,8 @@ type ProjectionChartDatum = {
   charityCents: number;
   plannedSavingsCents: number;
   netSpendableChangeCents: number;
+  goalSpendCents: number;
+  goalEvents: string;
   closingSpendableCents: number;
   closingSavingsCents: number;
   cumulativeTaxCents: number;
@@ -90,6 +101,11 @@ function ProjectionChartTooltip({
       <div className="mb-3 border-b border-border pb-2">
         <p className="font-semibold">{label}</p>
         <p className="text-xs text-muted-foreground">{datum.activePeriods}</p>
+        {datum.goalEvents ? (
+          <p className="mt-1 text-xs font-medium text-primary">
+            {datum.goalEvents}
+          </p>
+        ) : null}
       </div>
 
       <div className="space-y-1.5">
@@ -108,6 +124,9 @@ function ProjectionChartTooltip({
       <div className="my-3 border-t border-border" />
 
       <div className="space-y-1.5">
+        {datum.goalSpendCents > 0 ? (
+          <TooltipRow label="Goal spend" value={-datum.goalSpendCents} />
+        ) : null}
         <TooltipRow label="Ending cash" value={datum.closingSpendableCents} />
         <TooltipRow label="Ending savings" value={datum.closingSavingsCents} />
         {datum.reservedGoalContributionCents > 0 ? (
@@ -277,7 +296,31 @@ function formatSignedMoney(cents: number): string {
 
 export function DashboardPage() {
   const plan = usePlannerStore((state) => state.plan);
+  const updatePlan = usePlannerStore((state) => state.updatePlan);
   const [selectedThroughPeriodId, setSelectedThroughPeriodId] = useState("");
+
+  const toggleGoalExecution = (
+    goalId: string,
+    scenarioId: string,
+    executed: boolean
+  ) => {
+    void updatePlan((draft) => {
+      const existing = draft.executions ?? [];
+      draft.executions = executed
+        ? existing.filter(
+            (execution) =>
+              !(
+                execution.goalId === goalId &&
+                execution.scenarioId === scenarioId
+              )
+          )
+        : [
+            ...existing,
+            { goalId, scenarioId, executedAt: new Date().toISOString() }
+          ];
+      return draft;
+    });
+  };
   const sortedPeriods = useMemo(
     () =>
       plan
@@ -380,6 +423,8 @@ export function DashboardPage() {
       charityCents: month.charityCents,
       plannedSavingsCents: month.plannedSavingsCents,
       netSpendableChangeCents: month.netSpendableChangeCents,
+      goalSpendCents: month.goalSpendCents,
+      goalEvents: month.goalEventLabels.join(", "),
       closingSpendableCents: month.closingSpendableCents,
       closingSavingsCents: month.closingSavingsCents,
       cumulativeTaxCents: month.cumulativeTaxCents,
@@ -586,13 +631,20 @@ export function DashboardPage() {
                       {result.scenarioName} by {result.targetDate}
                     </p>
                   </div>
-                  <Badge
-                    variant={
-                      result.surplusOrShortfallCents >= 0 ? "success" : "danger"
-                    }
-                  >
-                    {formatPercent(Math.round(result.percentFunded))}
-                  </Badge>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {result.executed ? (
+                      <Badge variant="default">Executed</Badge>
+                    ) : null}
+                    <Badge
+                      variant={
+                        result.surplusOrShortfallCents >= 0
+                          ? "success"
+                          : "danger"
+                      }
+                    >
+                      {formatPercent(Math.round(result.percentFunded))}
+                    </Badge>
+                  </div>
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                   <div>
@@ -615,7 +667,9 @@ export function DashboardPage() {
                   </div>
                   {result.availableDownPaymentCents !== undefined ? (
                     <div>
-                      <p className="text-muted-foreground">Down payment</p>
+                      <p className="text-muted-foreground">
+                        Affordable down payment
+                      </p>
                       <p className="font-semibold">
                         {formatMoney(result.availableDownPaymentCents)}
                       </p>
@@ -640,6 +694,43 @@ export function DashboardPage() {
                       </p>
                     </div>
                   ) : null}
+                </div>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+                  <p className="text-sm text-muted-foreground">
+                    {(() => {
+                      const fromSavings = Math.min(
+                        result.contributedFromSavingsCents,
+                        result.executionUpfrontCents
+                      );
+                      const fromCash =
+                        result.executionUpfrontCents - fromSavings;
+                      const verb = result.executed ? "Funding" : "Simulate";
+                      return `${verb} ${formatMoney(fromSavings)} from savings + ${formatMoney(fromCash)} from cash on ${result.targetDate}`;
+                    })()}
+                  </p>
+                  <Button
+                    onClick={() =>
+                      toggleGoalExecution(
+                        result.goalId,
+                        result.scenarioId,
+                        result.executed
+                      )
+                    }
+                    type="button"
+                    variant={result.executed ? "outline" : "default"}
+                  >
+                    {result.executed ? (
+                      <>
+                        <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                        Undo
+                      </>
+                    ) : (
+                      <>
+                        <Home className="h-4 w-4" aria-hidden="true" />
+                        Execute
+                      </>
+                    )}
+                  </Button>
                 </div>
               </div>
             ))}
