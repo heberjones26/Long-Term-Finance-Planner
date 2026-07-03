@@ -7,7 +7,9 @@ import {
   parseISO
 } from "date-fns";
 import {
+  ArrowLeft,
   CalendarPlus,
+  ChevronRight,
   ClipboardCheck,
   Copy,
   Pencil,
@@ -84,23 +86,17 @@ export function PeriodsPage() {
         : [],
     [plan]
   );
-  const currentPeriodId = useMemo(
-    () =>
-      sortedPeriods.find((period) => isPeriodCurrent(period, today))?.id ?? "",
-    [sortedPeriods, today]
-  );
-
   useEffect(() => {
     if (!plan) {
       return;
     }
     if (
-      !selectedPeriodId ||
+      selectedPeriodId &&
       !plan.periods.some((period) => period.id === selectedPeriodId)
     ) {
-      setSelectedPeriodId(currentPeriodId || sortedPeriods[0]?.id || "");
+      setSelectedPeriodId("");
     }
-  }, [currentPeriodId, plan, selectedPeriodId, sortedPeriods]);
+  }, [plan, selectedPeriodId]);
 
   const selectedPeriod = plan?.periods.find(
     (period) => period.id === selectedPeriodId
@@ -241,13 +237,7 @@ export function PeriodsPage() {
       return draft;
     });
     setAuditModalOpen(false);
-    const fallback =
-      sortedPeriods.find(
-        (period) =>
-          period.id !== selectedPeriod.id && isPeriodCurrent(period, today)
-      ) ??
-      sortedPeriods.find((period) => period.id !== selectedPeriod.id);
-    setSelectedPeriodId(fallback?.id ?? "");
+    setSelectedPeriodId("");
   };
 
   return (
@@ -256,83 +246,37 @@ export function PeriodsPage() {
         eyebrow="Timeline"
         title="Periods"
         actions={
-          <>
+          selectedPeriod && draftPeriod ? (
+            <>
+              <Button
+                onClick={() => setSelectedPeriodId("")}
+                type="button"
+                variant="outline"
+              >
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                Back
+              </Button>
+              <Button
+                disabled={!draftPeriod}
+                onClick={duplicatePeriod}
+                type="button"
+                variant="outline"
+              >
+                <Copy className="h-4 w-4" aria-hidden="true" />
+                Duplicate
+              </Button>
+            </>
+          ) : (
             <Button onClick={addPeriod} type="button">
               <CalendarPlus className="h-4 w-4" aria-hidden="true" />
               Period
             </Button>
-            <Button
-              disabled={!draftPeriod}
-              onClick={duplicatePeriod}
-              type="button"
-              variant="outline"
-            >
-              <Copy className="h-4 w-4" aria-hidden="true" />
-              Duplicate
-            </Button>
-          </>
+          )
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="space-y-2">
-          {sortedPeriods.map((period) => {
-            const scenario = plan.costOfLivingScenarios.find(
-              (item) => item.id === period.costOfLivingScenarioId
-            );
-            const selected = period.id === selectedPeriodId;
-            const current = isPeriodCurrent(period, today);
-            const past = isPeriodPast(period, today);
-            return (
-              <div
-                className={cn(
-                  "w-full rounded-md border border-border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary",
-                  current && "border-emerald-300 bg-emerald-50/70",
-                  selected && "border-primary bg-primary/5"
-                )}
-                key={period.id}
-              >
-                <button
-                  className="w-full text-left"
-                  onClick={() => setSelectedPeriodId(period.id)}
-                  type="button"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="font-medium">{period.name}</p>
-                    {current ? <Badge variant="success">Current</Badge> : null}
-                  </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {period.startDate} to {period.endDate}
-                  </p>
-                </button>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-wrap gap-2">
-                    <Badge variant="muted">
-                      {scenario?.name ?? "Missing COL"}
-                    </Badge>
-                    {period.audit?.completedAt ? (
-                      <Badge variant="success">Audited</Badge>
-                    ) : past ? (
-                      <Badge variant="warning">Audit ready</Badge>
-                    ) : null}
-                  </div>
-                  <Button
-                    onClick={() => openAuditForPeriod(period)}
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                  >
-                    <ClipboardCheck className="h-3.5 w-3.5" aria-hidden="true" />
-                    Audit
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
-        </aside>
-
-        {selectedPeriod && draftPeriod ? (
-          <div className="space-y-6">
+      {selectedPeriod && draftPeriod ? (
+        <div className="space-y-6">
             <Card>
               <CardHeader>
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -609,9 +553,109 @@ export function PeriodsPage() {
                 </CardContent>
               </Card>
             ) : null}
-          </div>
-        ) : null}
-      </div>
+        </div>
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead className="bg-muted text-left text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Period</th>
+                    <th className="px-4 py-3 font-medium">Dates</th>
+                    <th className="px-4 py-3 font-medium">Cost of living</th>
+                    <th className="px-4 py-3 font-medium">Profit</th>
+                    <th className="px-4 py-3 font-medium">Status</th>
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedPeriods.map((period) => {
+                    const scenario = plan.costOfLivingScenarios.find(
+                      (item) => item.id === period.costOfLivingScenarioId
+                    );
+                    const summary = projection.periodSummaries.find(
+                      (item) => item.periodId === period.id
+                    );
+                    const current = isPeriodCurrent(period, today);
+                    const past = isPeriodPast(period, today);
+                    return (
+                      <tr
+                        className={cn(
+                          "cursor-pointer border-t border-border transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none",
+                          current && "bg-emerald-50/70"
+                        )}
+                        key={period.id}
+                        onClick={() => setSelectedPeriodId(period.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelectedPeriodId(period.id);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{period.name}</span>
+                            {current ? (
+                              <Badge variant="success">Current</Badge>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {period.startDate} to {period.endDate}
+                        </td>
+                        <td className="px-4 py-3">
+                          {scenario?.name ?? "Missing COL"}
+                        </td>
+                        <td className="px-4 py-3">
+                          {summary ? formatMoney(summary.profitCents) : "-"}
+                        </td>
+                        <td className="px-4 py-3">
+                          {period.audit?.completedAt ? (
+                            <Badge variant="success">Audited</Badge>
+                          ) : past ? (
+                            <Badge variant="warning">Audit ready</Badge>
+                          ) : current ? (
+                            <Badge variant="muted">In progress</Badge>
+                          ) : (
+                            <Badge variant="muted">Upcoming</Badge>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openAuditForPeriod(period);
+                              }}
+                              size="sm"
+                              type="button"
+                              variant="outline"
+                            >
+                              <ClipboardCheck
+                                className="h-3.5 w-3.5"
+                                aria-hidden="true"
+                              />
+                              Audit
+                            </Button>
+                            <ChevronRight
+                              className="h-4 w-4 text-muted-foreground"
+                              aria-hidden="true"
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {auditModalOpen && draftPeriod ? (
         <PeriodAuditModal
