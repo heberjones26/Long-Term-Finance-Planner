@@ -1,4 +1,4 @@
-import { Copy, Plus, Save, Trash2, Undo2 } from "lucide-react";
+import { ArrowLeft, ChevronRight, Copy, Plus, Save, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { MoneyInput } from "../components/MoneyInput";
 import { PageHeader } from "../components/PageHeader";
@@ -35,10 +35,9 @@ export function GoalsPage() {
     if (!plan) {
       return;
     }
-    if (!selectedGoalId || !plan.goals.some((goal) => goal.id === selectedGoalId)) {
-      const firstGoal = plan.goals[0];
-      setSelectedGoalId(firstGoal?.id ?? "");
-      setSelectedScenarioId(firstGoal?.scenarios[0]?.id ?? "");
+    if (selectedGoalId && !plan.goals.some((goal) => goal.id === selectedGoalId)) {
+      setSelectedGoalId("");
+      setSelectedScenarioId("");
       return;
     }
     const goal = plan.goals.find((item) => item.id === selectedGoalId);
@@ -144,9 +143,8 @@ export function GoalsPage() {
       draft.goals = draft.goals.filter((goal) => goal.id !== selectedGoal.id);
       return draft;
     });
-    const fallback = plan.goals.find((goal) => goal.id !== selectedGoal.id);
-    setSelectedGoalId(fallback?.id ?? "");
-    setSelectedScenarioId(fallback?.scenarios[0]?.id ?? "");
+    setSelectedGoalId("");
+    setSelectedScenarioId("");
   };
 
   const addScenario = () => {
@@ -216,51 +214,43 @@ export function GoalsPage() {
         eyebrow="Goal Scenarios"
         title="Goals"
         actions={
-          <>
+          selectedGoal && draftGoal && selectedScenario ? (
+            <>
+              <Button
+                onClick={() => {
+                  setSelectedGoalId("");
+                  setSelectedScenarioId("");
+                }}
+                type="button"
+                variant="outline"
+              >
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                Back
+              </Button>
+              <Button
+                disabled={!draftGoal}
+                onClick={addScenario}
+                type="button"
+                variant="outline"
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Scenario
+              </Button>
+              {hasUnsavedChanges ? (
+                <Badge variant="warning">Unsaved</Badge>
+              ) : null}
+            </>
+          ) : (
             <Button onClick={addGoal} type="button">
               <Plus className="h-4 w-4" aria-hidden="true" />
               Goal
             </Button>
-            <Button
-              disabled={!draftGoal}
-              onClick={addScenario}
-              type="button"
-              variant="outline"
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              Scenario
-            </Button>
-            {hasUnsavedChanges ? <Badge variant="warning">Unsaved</Badge> : null}
-          </>
+          )
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="space-y-2">
-          {plan.goals.map((goal) => (
-            <button
-              className={cn(
-                "w-full rounded-md border border-border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary",
-                goal.id === selectedGoal?.id && "border-primary bg-primary/5"
-              )}
-              key={goal.id}
-              onClick={() => {
-                setSelectedGoalId(goal.id);
-                setSelectedScenarioId(goal.scenarios[0]?.id ?? "");
-              }}
-              type="button"
-            >
-              <p className="font-medium">{goal.name}</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {goal.scenarios.length} scenario
-                {goal.scenarios.length === 1 ? "" : "s"}
-              </p>
-            </button>
-          ))}
-        </aside>
-
-        {selectedGoal && draftGoal && selectedScenario ? (
-          <div className="space-y-6">
+      {selectedGoal && draftGoal && selectedScenario ? (
+        <div className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>{draftGoal.name}</CardTitle>
@@ -519,9 +509,75 @@ export function GoalsPage() {
                 ) : null}
               </CardContent>
             </Card>
-          </div>
-        ) : null}
-      </div>
+        </div>
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[560px] text-sm">
+                <thead className="bg-muted text-left text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Goal</th>
+                    <th className="px-4 py-3 font-medium">Scenarios</th>
+                    <th className="px-4 py-3 font-medium">Target date</th>
+                    <th className="px-4 py-3 font-medium">Funded</th>
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {plan.goals.map((goal) => {
+                    const firstScenario = goal.scenarios[0];
+                    const result = projection.goalResults.find(
+                      (item) =>
+                        item.goalId === goal.id &&
+                        item.scenarioId === firstScenario?.id
+                    );
+                    return (
+                      <tr
+                        className="cursor-pointer border-t border-border transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
+                        key={goal.id}
+                        onClick={() => {
+                          setSelectedGoalId(goal.id);
+                          setSelectedScenarioId(goal.scenarios[0]?.id ?? "");
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelectedGoalId(goal.id);
+                            setSelectedScenarioId(goal.scenarios[0]?.id ?? "");
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <td className="px-4 py-3 font-medium">{goal.name}</td>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {goal.scenarios.length} scenario
+                          {goal.scenarios.length === 1 ? "" : "s"}
+                        </td>
+                        <td className="px-4 py-3">
+                          {firstScenario?.targetDate ?? "-"}
+                        </td>
+                        <td className="px-4 py-3">
+                          {result
+                            ? formatPercent(Math.round(result.percentFunded))
+                            : "-"}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <ChevronRight
+                            className="ml-auto h-4 w-4 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
