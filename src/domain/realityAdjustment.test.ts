@@ -98,7 +98,7 @@ describe("reality adjustment", () => {
 
     expect(auditedSummary).toBeDefined();
     plan.periods[0].audit = {
-      actualGrossIncomeCents: auditedSummary!.grossIncomeCents,
+      actualGrossIncomeCents: Math.round(auditedSummary!.grossIncomeCents * 0.85),
       actualTaxCents: Math.round(auditedSummary!.taxCents * 1.03),
       actualCostOfLivingCents: Math.round(
         auditedSummary!.costOfLivingCents * 1.07

@@ -149,9 +149,10 @@ describe("projection engine", () => {
 
     expect(result.months).toHaveLength(1);
     expect(finalMonth?.month).toBe("2026-01");
+    // No savings committed to the goal, so available cash is the spendable
+    // balance alone.
     expect(result.goalResults[0].availableCashCents).toBe(
-      (finalMonth?.closingSpendableCents ?? 0) +
-        (finalMonth?.closingSavingsCents ?? 0)
+      finalMonth?.closingSpendableCents ?? 0
     );
   });
 
@@ -404,10 +405,10 @@ describe("projection engine", () => {
     ).toBe(true);
   });
 
-  it("evaluates goals against spendable cash plus savings", () => {
+  it("evaluates goals against spendable cash plus committed savings", () => {
     const plan = basePlan();
     plan.startingSpendableCents = 50000;
-    plan.startingSavingsCents = 50000;
+    plan.startingSavingsCents = 80000;
     plan.periods = [
       {
         id: "period",
@@ -426,6 +427,8 @@ describe("projection engine", () => {
       {
         id: "goal",
         name: "Cash target",
+        // Only $50k of the $80k savings is committed to this goal.
+        contributedFromSavingsCents: 50000,
         scenarios: [
           {
             id: "scenario",
@@ -439,6 +442,8 @@ describe("projection engine", () => {
 
     const result = projectPlan(plan);
 
+    // Spendable ($50k) + committed savings ($50k); the uncommitted $30k of
+    // savings is left out.
     expect(result.goalResults[0].availableCashCents).toBe(100000);
     expect(result.goalResults[0].surplusOrShortfallCents).toBe(10000);
   });
@@ -500,10 +505,12 @@ describe("projection engine", () => {
     expect(result.totals.reservedGoalContributionCents).toBe(50000);
     expect(result.totals.endingAvailableCents).toBe(100000);
     expect(result.totals.endingNetWorthCents).toBe(100000);
-    expect(houseResult?.unallocatedAvailableCashCents).toBe(50000);
+    // With no spendable cash, each goal can only draw on its own committed
+    // savings; the rest of savings stays as a buffer.
+    expect(houseResult?.unallocatedAvailableCashCents).toBe(0);
     expect(houseResult?.contributedFromSavingsCents).toBe(30000);
-    expect(houseResult?.availableCashCents).toBe(80000);
-    expect(carResult?.availableCashCents).toBe(70000);
+    expect(houseResult?.availableCashCents).toBe(30000);
+    expect(carResult?.availableCashCents).toBe(20000);
   });
 
   it("uses goal contributions when calculating available house down payment", () => {
@@ -554,13 +561,15 @@ describe("projection engine", () => {
       (item) => item.goalId === "house"
     );
 
-    expect(houseResult?.unallocatedAvailableCashCents).toBe(2891934);
-    expect(houseResult?.availableCashCents).toBe(5891934);
+    // Only the $3M committed from savings (plus $0 spendable) funds the goal;
+    // the uncommitted savings is no longer counted.
+    expect(houseResult?.unallocatedAvailableCashCents).toBe(0);
+    expect(houseResult?.availableCashCents).toBe(3000000);
     expect(houseResult?.requiredCashCents).toBe(2300000);
     expect(houseResult?.requiredDownPaymentCents).toBe(2000000);
     expect(houseResult?.requiredClosingCostCents).toBe(300000);
-    expect(houseResult?.availableDownPaymentCents).toBe(5591934);
-    expect(houseResult?.availableDownPaymentPercent).toBeCloseTo(55.92, 2);
+    expect(houseResult?.availableDownPaymentCents).toBe(2700000);
+    expect(houseResult?.availableDownPaymentPercent).toBeCloseTo(27, 2);
   });
 
   it("treats explicit other goals as generic even if stale house fields exist", () => {
@@ -667,6 +676,87 @@ describe("projection engine", () => {
     );
     expect(amortization.schedule[0].interestCents).toBe(160000);
     expect(amortization.schedule.at(-1)?.remainingPrincipalCents).toBe(0);
+  });
+
+  it("executes a house goal by spending cash and adding a monthly payment", () => {
+    const plan = basePlan();
+    plan.startingSavingsCents = 5000000;
+    plan.periods = [
+      {
+        id: "period",
+        name: "Year",
+        startDate: "2026-01-01",
+        endDate: "2026-12-31",
+        costOfLivingScenarioId: "col",
+        grossIncomeItems: [],
+        extraExpenseItems: [],
+        effectiveTaxRate: 0,
+        savingsRate: 0,
+        charityRate: 0
+      }
+    ];
+    plan.startingSpendableCents = 1000000;
+    plan.goals = [
+      {
+        id: "house",
+        name: "Buy a house",
+        // Only this much of savings is earmarked for the purchase.
+        contributedFromSavingsCents: 2000000,
+        scenarios: [
+          {
+            id: "house-base",
+            name: "Base",
+            type: "house",
+            targetDate: "2026-06-15",
+            targetAmountCents: 0,
+            house: {
+              purchasePriceCents: 10000000,
+              downPaymentPercent: 20,
+              closingCostPercent: 3,
+              interestRatePercent: 6,
+              loanTermYears: 30,
+              annualPropertyTaxPercent: 1,
+              monthlyInsuranceCents: 0,
+              monthlyHoaCents: 0
+            }
+          }
+        ]
+      }
+    ];
+
+    const baseline = projectPlan(plan);
+    expect(baseline.goalResults[0].executed).toBe(false);
+    expect(baseline.totals.endingNetWorthCents).toBe(6000000);
+
+    plan.executions = [
+      {
+        goalId: "house",
+        scenarioId: "house-base",
+        executedAt: "2026-01-01T00:00:00.000Z"
+      }
+    ];
+
+    const result = projectPlan(plan);
+    const goalResult = result.goalResults[0];
+    const june = result.months.find((month) => month.month === "2026-06");
+    const july = result.months.find((month) => month.month === "2026-07");
+
+    expect(goalResult.executed).toBe(true);
+    expect(goalResult.executionUpfrontCents).toBe(2300000);
+    // The full upfront cost ($2.3M) is spent the month of purchase.
+    expect(june?.goalSpendCents).toBe(2300000);
+    // Only the $2M earmarked contribution comes from savings; the remaining
+    // $3M stays as an emergency buffer.
+    expect(june?.closingSavingsCents).toBe(3000000);
+    // The remaining $300k of upfront cost is drawn from spendable cash.
+    expect(june?.closingSpendableCents).toBe(700000);
+    // No recurring mortgage payment is applied; that lives in cost of living.
+    expect(july?.goalSpendCents).toBe(0);
+    expect(july?.closingSpendableCents).toBe(700000);
+    // Net worth reflects the cash that left the plan.
+    expect(result.totals.endingNetWorthCents).toBeLessThan(
+      baseline.totals.endingNetWorthCents
+    );
   });
 
   it("projects the seeded plan without crashing", () => {

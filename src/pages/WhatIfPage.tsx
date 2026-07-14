@@ -28,7 +28,7 @@ import { PageHeader } from "../components/PageHeader";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Field, Select } from "../components/ui/field";
+import { Field, Input, Select } from "../components/ui/field";
 import { createId } from "../domain/ids";
 import { formatMoney } from "../domain/money";
 import { projectPlan } from "../domain/projection";
@@ -50,6 +50,7 @@ import {
   type WhatIfCostOfLivingItemOverride,
   type WhatIfPeriodItemKind,
   type WhatIfPeriodItemOverride,
+  type WhatIfPeriodSavingsRateOverride,
   type WhatIfInputs
 } from "../domain/whatIf";
 import { usePlannerStore } from "../store/plannerStore";
@@ -88,6 +89,10 @@ export function WhatIfPage() {
     () => inputs.periodItemOverrides ?? [],
     [inputs.periodItemOverrides]
   );
+  const periodSavingsRateOverrides = useMemo(
+    () => inputs.periodSavingsRateOverrides ?? [],
+    [inputs.periodSavingsRateOverrides]
+  );
   const selectedGoal = plan?.goals.find(
     (goal) => goal.id === inputs.selectedGoalId
   );
@@ -101,6 +106,16 @@ export function WhatIfPage() {
   const firstPeriodOverrideTarget = useMemo(
     () => findFirstAvailablePeriodItem(sortedPeriods, periodItemOverrides),
     [periodItemOverrides, sortedPeriods]
+  );
+  const firstSavingsRateOverrideTarget = useMemo(
+    () =>
+      sortedPeriods.find(
+        (period) =>
+          !periodSavingsRateOverrides.some(
+            (override) => override.periodId === period.id
+          )
+      ),
+    [periodSavingsRateOverrides, sortedPeriods]
   );
 
   const baseProjection = useMemo(
@@ -352,6 +367,66 @@ export function WhatIfPage() {
     }));
   };
 
+  const addSavingsRateOverride = () => {
+    if (!firstSavingsRateOverrideTarget) {
+      return;
+    }
+
+    setInputs((current) => ({
+      ...current,
+      periodSavingsRateOverrides: [
+        ...(current.periodSavingsRateOverrides ?? []),
+        {
+          id: createId("what_if_savings_rate"),
+          periodId: firstSavingsRateOverrideTarget.id,
+          savingsRate: firstSavingsRateOverrideTarget.savingsRate
+        }
+      ]
+    }));
+  };
+
+  const updateSavingsRateOverride = (
+    overrideId: Id,
+    updates: Partial<WhatIfPeriodSavingsRateOverride>
+  ) => {
+    setInputs((current) => {
+      const overrides = current.periodSavingsRateOverrides ?? [];
+
+      return {
+        ...current,
+        periodSavingsRateOverrides: overrides.map((override) => {
+          if (override.id !== overrideId) {
+            return override;
+          }
+
+          const nextOverride = { ...override, ...updates };
+
+          if (updates.periodId && updates.periodId !== override.periodId) {
+            const period = sortedPeriods.find(
+              (item) => item.id === updates.periodId
+            );
+
+            return {
+              ...nextOverride,
+              savingsRate: period?.savingsRate ?? 0
+            };
+          }
+
+          return nextOverride;
+        })
+      };
+    });
+  };
+
+  const removeSavingsRateOverride = (overrideId: Id) => {
+    setInputs((current) => ({
+      ...current,
+      periodSavingsRateOverrides: (
+        current.periodSavingsRateOverrides ?? []
+      ).filter((override) => override.id !== overrideId)
+    }));
+  };
+
   const resetInputs = () => setInputs(createInitialInputs(plan));
 
   const confirmApply = () => {
@@ -456,6 +531,37 @@ export function WhatIfPage() {
                 </div>
               ) : (
                 <EmptyOverrideState label="No period item edits" />
+              )}
+            </div>
+
+            <div className="space-y-3 border-t border-border pt-5">
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle>Period Savings Rate</CardTitle>
+                <Button
+                  disabled={!firstSavingsRateOverrideTarget}
+                  onClick={addSavingsRateOverride}
+                  type="button"
+                  variant="outline"
+                >
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  Savings Rate
+                </Button>
+              </div>
+              {periodSavingsRateOverrides.length ? (
+                <div className="space-y-3">
+                  {periodSavingsRateOverrides.map((override) => (
+                    <SavingsRateOverrideRow
+                      key={override.id}
+                      onRemove={removeSavingsRateOverride}
+                      onUpdate={updateSavingsRateOverride}
+                      override={override}
+                      overrides={periodSavingsRateOverrides}
+                      periods={sortedPeriods}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <EmptyOverrideState label="No savings rate edits" />
               )}
             </div>
 
@@ -860,6 +966,88 @@ function PeriodOverrideRow({
   );
 }
 
+function SavingsRateOverrideRow({
+  onRemove,
+  onUpdate,
+  override,
+  overrides,
+  periods
+}: {
+  onRemove: (overrideId: Id) => void;
+  onUpdate: (
+    overrideId: Id,
+    updates: Partial<WhatIfPeriodSavingsRateOverride>
+  ) => void;
+  override: WhatIfPeriodSavingsRateOverride;
+  overrides: WhatIfPeriodSavingsRateOverride[];
+  periods: FinancialPeriod[];
+}) {
+  const period = periods.find((item) => item.id === override.periodId);
+  const changed =
+    period !== undefined &&
+    normalizeRate(override.savingsRate) !== period.savingsRate;
+
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <Badge variant={changed ? "warning" : "muted"}>
+          {changed ? "Changed" : "Baseline"}
+        </Badge>
+        <Button
+          aria-label="Remove savings rate edit"
+          onClick={() => onRemove(override.id)}
+          size="icon"
+          type="button"
+          variant="ghost"
+        >
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </div>
+      <div className="grid gap-3">
+        <Field label="Period">
+          <Select
+            aria-label="Savings rate period"
+            value={override.periodId}
+            onChange={(event) =>
+              onUpdate(override.id, { periodId: event.target.value })
+            }
+          >
+            {periods.map((candidate) => (
+              <option
+                disabled={overrides.some(
+                  (other) =>
+                    other.id !== override.id &&
+                    other.periodId === candidate.id
+                )}
+                key={candidate.id}
+                value={candidate.id}
+              >
+                {candidate.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Savings rate">
+          <Input
+            aria-label="Savings rate override"
+            disabled={!period}
+            max="100"
+            min="0"
+            step="0.1"
+            type="number"
+            value={override.savingsRate}
+            onChange={(event) =>
+              onUpdate(override.id, {
+                savingsRate: Number(event.target.value)
+              })
+            }
+          />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
 function ComparisonMetric({
   baseValue,
   deltaValue,
@@ -1078,6 +1266,11 @@ function normalizeInputsForPlan(
     periodItemOverrides: (inputs.periodItemOverrides ?? []).filter((override) =>
       Boolean(findPeriodItem(plan.periods, override))
     ),
+    periodSavingsRateOverrides: (
+      inputs.periodSavingsRateOverrides ?? []
+    ).filter((override) =>
+      plan.periods.some((period) => period.id === override.periodId)
+    ),
     selectedGoalId: goal?.id ?? fallback.selectedGoalId,
     selectedScenarioId: scenario?.id ?? fallback.selectedScenarioId
   };
@@ -1135,6 +1328,16 @@ function getWhatIfChangeCount(
     if (
       item &&
       normalizeMoneyCents(override.amountCents) !== item.amountCents
+    ) {
+      count += 1;
+    }
+  }
+
+  for (const override of inputs.periodSavingsRateOverrides ?? []) {
+    const period = plan.periods.find((item) => item.id === override.periodId);
+    if (
+      period &&
+      normalizeRate(override.savingsRate) !== period.savingsRate
     ) {
       count += 1;
     }
@@ -1338,6 +1541,13 @@ function normalizeMoneyCents(value: MoneyCents): MoneyCents {
     return 0;
   }
   return Math.max(Math.round(value), 0);
+}
+
+function normalizeRate(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(Math.max(value, 0), 100);
 }
 
 function formatSignedMoney(cents: number): string {

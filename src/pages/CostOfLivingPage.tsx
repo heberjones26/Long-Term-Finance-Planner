@@ -1,4 +1,13 @@
-import { Copy, Pencil, Plus, Save, Trash2, Undo2 } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronRight,
+  Copy,
+  Pencil,
+  Plus,
+  Save,
+  Trash2,
+  Undo2
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { MoneyVariableField } from "../components/VariableField";
@@ -43,12 +52,12 @@ export function CostOfLivingPage() {
       return;
     }
     if (
-      !selectedScenarioId ||
+      selectedScenarioId &&
       !plan.costOfLivingScenarios.some(
         (scenario) => scenario.id === selectedScenarioId
       )
     ) {
-      setSelectedScenarioId(plan.costOfLivingScenarios[0]?.id ?? "");
+      setSelectedScenarioId("");
     }
   }, [plan, selectedScenarioId]);
 
@@ -69,11 +78,13 @@ export function CostOfLivingPage() {
     0
   );
 
-  if (!plan || !selectedScenario || !draftScenario) {
+  if (!plan) {
     return null;
   }
 
-  const hasUnsavedChanges = !isSameDraft(selectedScenario, draftScenario);
+  const hasUnsavedChanges =
+    Boolean(selectedScenario && draftScenario) &&
+    !isSameDraft(selectedScenario, draftScenario);
 
   const updateDraftScenario = (updater: (scenario: CostOfLivingScenario) => void) => {
     setDraftScenario((current) => {
@@ -99,6 +110,9 @@ export function CostOfLivingPage() {
   };
 
   const saveScenario = () => {
+    if (!draftScenario) {
+      return;
+    }
     void updatePlan((draft) => {
       const index = draft.costOfLivingScenarios.findIndex(
         (scenario) => scenario.id === draftScenario.id
@@ -142,7 +156,7 @@ export function CostOfLivingPage() {
   };
 
   const deleteScenario = () => {
-    if (plan.costOfLivingScenarios.length <= 1) {
+    if (!selectedScenario || plan.costOfLivingScenarios.length <= 1) {
       return;
     }
     const fallback = plan.costOfLivingScenarios.find(
@@ -162,7 +176,7 @@ export function CostOfLivingPage() {
       });
       return draft;
     });
-    setSelectedScenarioId(fallback.id);
+    setSelectedScenarioId("");
   };
 
   const onAddItem = handleSubmit((values) => {
@@ -194,47 +208,34 @@ export function CostOfLivingPage() {
         eyebrow="Scenario Library"
         title="Cost of Living"
         actions={
-          <>
+          selectedScenario && draftScenario ? (
+            <>
+              <Button
+                onClick={() => setSelectedScenarioId("")}
+                type="button"
+                variant="outline"
+              >
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                Back
+              </Button>
+              <Button onClick={duplicateScenario} type="button" variant="outline">
+                <Copy className="h-4 w-4" aria-hidden="true" />
+                Duplicate
+              </Button>
+              {hasUnsavedChanges ? (
+                <Badge variant="warning">Unsaved</Badge>
+              ) : null}
+            </>
+          ) : (
             <Button onClick={addScenario} type="button">
               <Plus className="h-4 w-4" aria-hidden="true" />
               Scenario
             </Button>
-            <Button onClick={duplicateScenario} type="button" variant="outline">
-              <Copy className="h-4 w-4" aria-hidden="true" />
-              Duplicate
-            </Button>
-            {hasUnsavedChanges ? <Badge variant="warning">Unsaved</Badge> : null}
-          </>
+          )
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="space-y-2">
-          {plan.costOfLivingScenarios.map((scenario) => {
-            const total = getCategoryTotals(scenario).reduce(
-              (sum, category) => sum + category.amountCents,
-              0
-            );
-            const selected = scenario.id === selectedScenario.id;
-            return (
-              <button
-                className={cn(
-                  "w-full rounded-md border border-border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary",
-                  selected && "border-primary bg-primary/5"
-                )}
-                key={scenario.id}
-                onClick={() => setSelectedScenarioId(scenario.id)}
-                type="button"
-              >
-                <p className="font-medium">{scenario.name}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {formatMoney(total)} / month
-                </p>
-              </button>
-            );
-          })}
-        </aside>
-
+      {selectedScenario && draftScenario ? (
         <div className="space-y-6">
           <Card>
             <CardHeader>
@@ -306,7 +307,7 @@ export function CostOfLivingPage() {
             </CardHeader>
             <CardContent className="space-y-5">
               <form
-                className="grid gap-3 md:grid-cols-[1fr_1fr_140px_140px_auto]"
+                className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[1fr_1fr_140px_140px_auto]"
                 onSubmit={onAddItem}
               >
                 <Field label="Name">
@@ -523,7 +524,63 @@ export function CostOfLivingPage() {
             </CardContent>
           </Card>
         </div>
-      </div>
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[420px] text-sm">
+                <thead className="bg-muted text-left text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Scenario</th>
+                    <th className="px-4 py-3 font-medium">Monthly total</th>
+                    <th className="px-4 py-3 font-medium">Items</th>
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {plan.costOfLivingScenarios.map((scenario) => {
+                    const total = getCategoryTotals(scenario).reduce(
+                      (sum, category) => sum + category.amountCents,
+                      0
+                    );
+                    return (
+                      <tr
+                        className="cursor-pointer border-t border-border transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
+                        key={scenario.id}
+                        onClick={() => setSelectedScenarioId(scenario.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelectedScenarioId(scenario.id);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <td className="px-4 py-3 font-medium">
+                          {scenario.name}
+                        </td>
+                        <td className="px-4 py-3">
+                          {formatMoney(total)} / month
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {scenario.items.length}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <ChevronRight
+                            className="ml-auto h-4 w-4 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

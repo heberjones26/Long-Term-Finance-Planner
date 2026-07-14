@@ -116,6 +116,12 @@ export type Goal = {
   scenarios: GoalScenario[];
 };
 
+export type GoalExecution = {
+  goalId: Id;
+  scenarioId: Id;
+  executedAt: string;
+};
+
 export type VariableKind = "money" | "percent";
 
 export type VariableFieldPath =
@@ -170,6 +176,7 @@ export type PlanDocument = {
   costOfLivingScenarios: CostOfLivingScenario[];
   periods: FinancialPeriod[];
   goals: Goal[];
+  executions?: GoalExecution[];
   variables: Variable[];
   schemaVersion: number;
   createdAt: string;
@@ -189,6 +196,8 @@ export type ProjectionMonth = {
   charityCents: MoneyCents;
   plannedSavingsCents: MoneyCents;
   netSpendableChangeCents: MoneyCents;
+  goalSpendCents: MoneyCents;
+  goalEventLabels: string[];
   closingSpendableCents: MoneyCents;
   closingSavingsCents: MoneyCents;
   cumulativeTaxCents: MoneyCents;
@@ -233,6 +242,8 @@ export type GoalResult = {
   availableDownPaymentCents?: MoneyCents;
   availableDownPaymentPercent?: number;
   estimatedMonthlyPaymentCents?: MoneyCents;
+  executed: boolean;
+  executionUpfrontCents: MoneyCents;
 };
 
 export type ProjectionWarning = {

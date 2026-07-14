@@ -97,6 +97,12 @@ export const goalSchema = z.object({
   scenarios: z.array(goalScenarioSchema).min(1)
 });
 
+export const goalExecutionSchema = z.object({
+  goalId: z.string(),
+  scenarioId: z.string(),
+  executedAt: z.string()
+});
+
 export const variableFieldPathSchema = z.discriminatedUnion("scope", [
   z.object({
     scope: z.literal("plan"),
@@ -162,6 +168,7 @@ export const planDocumentSchema = z.object({
   costOfLivingScenarios: z.array(costOfLivingScenarioSchema),
   periods: z.array(financialPeriodSchema),
   goals: z.array(goalSchema),
+  executions: z.array(goalExecutionSchema).optional(),
   variables: z.array(variableSchema).default([]),
   schemaVersion: z.literal(1),
   createdAt: z.string(),
