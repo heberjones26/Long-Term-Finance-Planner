@@ -1,0 +1,8 @@
+# Never commit secrets, sessions, or exported financial data.
+.env
+.mm_session.pickle
+*.pickle
+.mm/
+monarch-export.json
+.venv/
+__pycache__/
